@@ -24,8 +24,8 @@ services:
     # 작업 디렉터리
     working_dir: /app
 
-    # 기본 명령 오버라이드 (필요시)
-    # command: ["python", "-m", "pytest", "tests/", "-v"]
+    # FastAPI 서버 실행 명령
+    command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   # 테스트 실행용 서비스 (선택사항)
   test:
