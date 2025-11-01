@@ -50,3 +50,18 @@ services:
 
     profiles:
       - test
+
+  # 프론트엔드 유닛 테스트 (Vitest)용 Node 컨테이너
+  frontend-test:
+    image: node:20-bullseye
+    container_name: coin-frontend-test
+    working_dir: /workspace
+    # Vitest 실행 시 프론트엔드 코드와 lock 파일만 필요
+    volumes:
+      - ./frontend:/workspace
+    environment:
+      # 컨테이너 내부는 쓰기 가능하므로 /tmp를 런타임 디렉터리로 사용
+      - VITEST_RUNTIME_DIR=/tmp/vitest-runtime
+    command: [ "bash", "-lc", "npm ci && npm run test" ]
+    profiles:
+      - frontend
