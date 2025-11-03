@@ -90,6 +90,60 @@ const BacktestResults = ({ result = null, loading = false, error = null }) => {
     );
   };
 
+  // 메타데이터 섹션 (Phase 2 확장)
+  const renderMetadataSection = () => {
+    if (!result.metadata) {
+      return null;
+    }
+
+    const formatDate = (dateString) => {
+      if (!dateString) return '-';
+      try {
+        return new Date(dateString).toLocaleString('ko-KR', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          timeZoneName: 'short'
+        });
+      } catch (e) {
+        return dateString;
+      }
+    };
+
+    return (
+      <div className="metadata-section">
+        <h3>메타데이터 (Phase 2)</h3>
+        <div className="metadata-grid">
+          <div className="metadata-item">
+            <span className="label">API 버전:</span>
+            <span className="value">{result.version || '1.0.0'}</span>
+          </div>
+          <div className="metadata-item">
+            <span className="label">실행 시간:</span>
+            <span className="value">{formatDate(result.metadata.execution_date)}</span>
+          </div>
+          <div className="metadata-item">
+            <span className="label">환경:</span>
+            <span className="value">{result.metadata.environment}</span>
+          </div>
+          <div className="metadata-item">
+            <span className="label">실행 호스트:</span>
+            <span className="value">{result.metadata.execution_host}</span>
+          </div>
+          {result.description && (
+            <div className="metadata-item full-width">
+              <span className="label">설명:</span>
+              <span className="value">{result.description}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // 백테스트 정보 섹션
   const renderInfoSection = () => {
     return (
@@ -165,6 +219,7 @@ const BacktestResults = ({ result = null, loading = false, error = null }) => {
 
   return (
     <div className="backtest-results">
+      {renderMetadataSection()}
       {renderInfoSection()}
       {renderMetricsSection()}
       {renderSignalsSection()}

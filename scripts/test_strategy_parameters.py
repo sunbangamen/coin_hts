@@ -38,9 +38,9 @@ def print_results_table(results, headers=None):
 # 테스트할 파라미터 조합
 PARAMETER_GRID = {
     # 기본값 기준으로 다양한 조합 생성
-    "vol_ma_window": [10, 20, 30, 60],  # 기본: 60
+    "vol_ma_window": [10, 20, 30, 60],  # 기본: 20
     "vol_multiplier": [1.0, 1.5, 2.0],  # 기본: 1.5
-    "breakout_pct": [0.0, 0.005, 0.01, 0.02],  # 기본: 0.01 (기본값이 없어서 유추)
+    "body_pct": [0.005, 0.01, 0.015, 0.02],  # 기본: 0.01
 }
 
 # Volume Zone Breakout 고유 파라미터
@@ -60,7 +60,7 @@ def test_volume_long_candle():
     param_combinations = list(itertools.product(
         PARAMETER_GRID['vol_ma_window'],
         PARAMETER_GRID['vol_multiplier'],
-        PARAMETER_GRID['breakout_pct'],
+        PARAMETER_GRID['body_pct'],
     ))
 
     print(f"테스트할 조합 수: {len(param_combinations)}\n")

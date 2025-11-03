@@ -150,14 +150,40 @@ class SymbolResult(BaseModel):
     avg_hold_bars: float
 
 
-class BacktestResponse(BaseModel):
-    """백테스트 응답 모델
+class MetadataInfo(BaseModel):
+    """메타데이터 정보 (Phase 2 확장)
 
-    JSON 스키마는 Phase 1에서 검증 완료
-    - 출처: test(integration): Complete Phase 1 End-to-End integration test and validation
-    - JSON 스키마: 9/9 필드 검증 완료
+    백테스트 실행 환경 및 시점 정보를 포함합니다.
     """
 
+    execution_date: str = Field(
+        ...,
+        description="백테스트 실행 날짜/시간 (ISO 8601 형식, UTC)"
+    )
+    environment: str = Field(
+        default="development",
+        description="실행 환경 (development, staging, production)"
+    )
+    execution_host: str = Field(
+        default="local",
+        description="실행 호스트 정보 (Docker 컨테이너 ID 또는 호스트명)"
+    )
+
+
+class BacktestResponse(BaseModel):
+    """백테스트 응답 모델 (Phase 2 메타데이터 확장)
+
+    JSON 스키마 버전: 1.1.0
+    - Phase 1: 9/9 필드 검증 완료
+    - Phase 2: version, metadata, description 필드 추가
+
+    하위 호환성: version 필드로 스키마 버전 관리
+    """
+
+    version: str = Field(
+        default="1.1.0",
+        description="API 응답 스키마 버전 (semantic versioning, 예: 1.1.0)"
+    )
     run_id: str = Field(..., description="백테스트 실행 ID (UUID)")
     strategy: str = Field(..., description="사용된 전략명")
     params: Dict[str, Any] = Field(..., description="실제 적용된 전략 파라미터")
@@ -167,6 +193,14 @@ class BacktestResponse(BaseModel):
     symbols: List[SymbolResult] = Field(..., description="심볼별 백테스트 결과")
     total_signals: int = Field(..., description="총 신호 개수")
     execution_time: float = Field(..., description="백테스트 실행 시간 (초)")
+    metadata: Optional[MetadataInfo] = Field(
+        default=None,
+        description="메타데이터: 실행 환경, 시점 정보 (Phase 2에서 추가됨, 향후 필수화 예정)"
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="백테스트 결과 설명 (선택사항, 예: 테스트 목적, 특이사항 등)"
+    )
 
 
 class ErrorResponse(BaseModel):
@@ -360,8 +394,19 @@ async def run_backtest(request: BacktestRequest):
 
         execution_time = time.time() - start_time
 
+        # 메타데이터 수집 (Phase 2 확장)
+        environment = os.getenv("ENVIRONMENT", "development")
+        execution_host = os.getenv("HOSTNAME", "local")
+
+        metadata = MetadataInfo(
+            execution_date=datetime.now().isoformat() + "Z",  # ISO 8601 UTC 형식
+            environment=environment,
+            execution_host=execution_host,
+        )
+
         # 응답 객체 생성
         response = BacktestResponse(
+            version="1.1.0",
             run_id=run_id,
             strategy=request.strategy,
             params=request.params,
@@ -371,6 +416,8 @@ async def run_backtest(request: BacktestRequest):
             symbols=symbol_results,
             total_signals=total_signals,
             execution_time=execution_time,
+            metadata=metadata,
+            description=None,  # 선택적 필드
         )
 
         # 결과를 JSON 파일로 저장
