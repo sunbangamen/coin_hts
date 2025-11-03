@@ -16,6 +16,7 @@ services:
       - ./data:/data
       - ./backend:/app/backend
       - ./tests:/app/tests
+      - ./scripts:/app/scripts
 
     # 네트워킹
     ports:
@@ -43,6 +44,7 @@ services:
       - ./data:/data
       - ./backend:/app/backend
       - ./tests:/app/tests
+      - ./scripts:/app/scripts
 
     working_dir: /app
 

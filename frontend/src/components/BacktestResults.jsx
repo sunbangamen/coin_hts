@@ -176,10 +176,20 @@ const BacktestResults = ({ result = null, loading = false, error = null }) => {
       equityValue: point.equity,
     }));
 
+    const normalizeTimestamp = (timestamp) => {
+      try {
+        return new Date(timestamp).toISOString();
+      } catch {
+        return timestamp;
+      }
+    };
+
     const signalMarkers = symbolWithCurve.signals.map(signal => {
+      const normalizedTimestamp = normalizeTimestamp(signal.timestamp);
+
       // performance_curve에서 신호 시점 찾기
       const matchingPoint = performanceData.find(
-        p => p.timestamp === signal.timestamp.split('T')[0]
+        p => normalizeTimestamp(p.timestamp) === normalizedTimestamp
       );
 
       return matchingPoint ? {
