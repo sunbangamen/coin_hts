@@ -591,6 +591,98 @@ tr:hover {
   font-family: 'Courier New', monospace;
 }
 
+/* Chart Section (Phase 3) */
+.chart-section {
+  background: white;
+  border-radius: 8px;
+  padding: 25px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+.chart-section h3 {
+  margin-bottom: 15px;
+  color: #2c3e50;
+  font-size: 18px;
+  border-bottom: 2px solid #2c3e50;
+  padding-bottom: 10px;
+}
+
+.chart-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 15px;
+  font-size: 14px;
+  color: #666;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.chart-info span {
+  font-weight: 500;
+}
+
+/* Chart Legend */
+.chart-legend {
+  display: flex;
+  gap: 30px;
+  margin-top: 15px;
+  padding: 10px 0;
+  border-top: 1px solid #e0e0e0;
+  justify-content: center;
+}
+
+.chart-legend .legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.chart-legend .legend-item.buy {
+  color: #28a745;
+}
+
+.chart-legend .legend-item.sell {
+  color: #dc3545;
+}
+
+.chart-legend .legend-marker {
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* Recharts Custom Styling */
+.recharts-wrapper {
+  margin: 0 auto;
+}
+
+.recharts-surface {
+  overflow: visible;
+}
+
+/* Responsive Chart */
+@media (max-width: 768px) {
+  .chart-section {
+    padding: 15px;
+  }
+
+  .chart-section h3 {
+    font-size: 16px;
+  }
+
+  .chart-legend {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .chart-info {
+    flex-direction: column;
+    gap: 5px;
+  }
+}
+
 /* Presets Section */
 .presets-section {
   margin-bottom: 20px;

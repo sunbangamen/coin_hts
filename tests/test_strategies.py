@@ -594,15 +594,30 @@ class TestPhase2Metadata:
     - description 필드 확인
     """
 
-    def test_backtest_response_contains_version(self, sample_ohlcv_data):
+    def test_backtest_response_contains_version(self):
         """BacktestResponse에 version 필드가 포함되어 있는지 확인"""
-        strategy = VolumeLongCandleStrategy()
-        result = strategy.run(sample_ohlcv_data, {})
+        from backend.app.main import BacktestResponse, MetadataInfo
 
-        # Phase 2 응답은 version 필드를 가져야 함
-        # 백엔드에서 BacktestResponse 객체를 생성할 때 version이 설정됨
-        assert isinstance(result, BacktestResult)
-        # 주의: BacktestResult는 내부 모델이고, API 응답 시 BacktestResponse로 변환됨
+        response = BacktestResponse(
+            run_id="test-id",
+            strategy="volume_long_candle",
+            params={"body_pct": 0.01},
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+            timeframe="1d",
+            symbols=[],
+            total_signals=0,
+            execution_time=0.01,
+            metadata=MetadataInfo(
+                execution_date="2025-11-03T16:30:45.123456Z",
+                environment="development",
+                execution_host="local",
+            ),
+            description=None,
+        )
+
+        assert response.version == "1.1.0"
+        assert response.metadata.execution_host == "local"
 
     def test_metadata_info_model_structure(self):
         """MetadataInfo 모델 구조 검증"""

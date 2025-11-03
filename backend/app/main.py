@@ -136,6 +136,26 @@ class APISignal(BaseModel):
     return_pct: float = Field(..., description="거래 수익률 (소수점, 예: 0.05 = 5%)")
 
 
+class PerformancePoint(BaseModel):
+    """성과곡선 포인트 (Phase 3 차트용)
+
+    시간대별 누적 수익률 데이터
+    """
+
+    timestamp: str = Field(
+        ...,
+        description="데이터 포인트 날짜 (YYYY-MM-DD)"
+    )
+    equity: float = Field(
+        ...,
+        description="누적 수익률 (소수점, 예: 1.05 = 5% 수익)"
+    )
+    drawdown: Optional[float] = Field(
+        default=None,
+        description="해당 시점의 낙폭 (선택사항)"
+    )
+
+
 class SymbolResult(BaseModel):
     """심볼별 백테스트 결과"""
 
@@ -148,6 +168,10 @@ class SymbolResult(BaseModel):
     avg_return: float
     max_drawdown: float
     avg_hold_bars: float
+    performance_curve: Optional[List[PerformancePoint]] = Field(
+        default=None,
+        description="성과곡선 데이터 (Phase 3 차트용, Equity Curve 라인 차트)"
+    )
 
 
 class MetadataInfo(BaseModel):
@@ -366,6 +390,25 @@ async def run_backtest(request: BacktestRequest):
                                 )
                             )
 
+                # Equity Curve (성과곡선) 계산 (Phase 3 차트용)
+                performance_curve = None
+                if result.signals and result.returns:
+                    performance_curve = []
+                    cumulative_equity = 1.0
+
+                    for i, signal in enumerate(result.signals):
+                        if i < len(result.returns):
+                            # 반환률을 소수점 형식으로 변환 (% to decimal)
+                            return_pct = result.returns[i] / 100.0
+                            cumulative_equity *= (1.0 + return_pct)
+
+                            performance_curve.append(
+                                PerformancePoint(
+                                    timestamp=signal.timestamp.strftime('%Y-%m-%d'),
+                                    equity=cumulative_equity
+                                )
+                            )
+
                 # 결과 추가
                 symbol_results.append(
                     SymbolResult(
@@ -375,6 +418,7 @@ async def run_backtest(request: BacktestRequest):
                         avg_return=result.avg_return,
                         max_drawdown=result.max_drawdown,
                         avg_hold_bars=result.avg_hold_bars,
+                        performance_curve=performance_curve,
                     )
                 )
                 total_signals += result.samples
@@ -399,7 +443,7 @@ async def run_backtest(request: BacktestRequest):
         execution_host = os.getenv("HOSTNAME", "local")
 
         metadata = MetadataInfo(
-            execution_date=datetime.now().isoformat() + "Z",  # ISO 8601 UTC 형식
+            execution_date=datetime.utcnow().isoformat() + "Z",  # ISO 8601 UTC 형식
             environment=environment,
             execution_host=execution_host,
         )
