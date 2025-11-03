@@ -1,0 +1,111 @@
+{
+  "test_timestamp": "2025-11-03T17:44:22.286259",
+  "test_results": [
+    {
+      "strategy": "VolumeLongCandle",
+      "success": true,
+      "error": null,
+      "execution_time_sec": 0.0115,
+      "memory_used_mb": 0.69,
+      "memory_peak_mb": 0.08,
+      "num_signals": 15,
+      "num_candles": 100,
+      "signals_per_second": 1301.26,
+      "timestamp": "2025-11-03T17:44:21.827499"
+    },
+    {
+      "strategy": "VolumeZoneBreakout",
+      "success": true,
+      "error": null,
+      "execution_time_sec": 0.0264,
+      "memory_used_mb": 0.0,
+      "memory_peak_mb": 0.07,
+      "num_signals": 66,
+      "num_candles": 100,
+      "signals_per_second": 2499.68,
+      "timestamp": "2025-11-03T17:44:21.854199"
+    },
+    {
+      "strategy": "VolumeLongCandle",
+      "success": true,
+      "error": null,
+      "execution_time_sec": 0.0103,
+      "memory_used_mb": 0.0,
+      "memory_peak_mb": 0.07,
+      "num_signals": 15,
+      "num_candles": 300,
+      "signals_per_second": 1452.56,
+      "timestamp": "2025-11-03T17:44:21.866309"
+    },
+    {
+      "strategy": "VolumeZoneBreakout",
+      "success": true,
+      "error": null,
+      "execution_time_sec": 0.0872,
+      "memory_used_mb": 0.0,
+      "memory_peak_mb": 0.17,
+      "num_signals": 220,
+      "num_candles": 300,
+      "signals_per_second": 2522.01,
+      "timestamp": "2025-11-03T17:44:21.953884"
+    },
+    {
+      "strategy": "VolumeLongCandle",
+      "success": true,
+      "error": null,
+      "execution_time_sec": 0.0101,
+      "memory_used_mb": 0.0,
+      "memory_peak_mb": 0.13,
+      "num_signals": 16,
+      "num_candles": 1000,
+      "signals_per_second": 1583.28,
+      "timestamp": "2025-11-03T17:44:21.967598"
+    },
+    {
+      "strategy": "VolumeZoneBreakout",
+      "success": true,
+      "error": null,
+      "execution_time_sec": 0.3133,
+      "memory_used_mb": 0.0,
+      "memory_peak_mb": 0.49,
+      "num_signals": 882,
+      "num_candles": 1000,
+      "signals_per_second": 2815.22,
+      "timestamp": "2025-11-03T17:44:22.281493"
+    }
+  ],
+  "equity_curve_analysis": [
+    {
+      "equity_curve_points": 20,
+      "signal_markers": 20,
+      "estimated_json_kb": 3.91,
+      "rendering_complexity": "Low",
+      "browser_memory_estimate_mb": 0.01,
+      "num_candles": 100,
+      "scale_name": "\uc18c\uaddc\ubaa8 (100 \uce94\ub4e4)"
+    },
+    {
+      "equity_curve_points": 60,
+      "signal_markers": 60,
+      "estimated_json_kb": 11.72,
+      "rendering_complexity": "Low",
+      "browser_memory_estimate_mb": 0.02,
+      "num_candles": 300,
+      "scale_name": "\uc911\uaddc\ubaa8 (300 \uce94\ub4e4)"
+    },
+    {
+      "equity_curve_points": 200,
+      "signal_markers": 200,
+      "estimated_json_kb": 39.06,
+      "rendering_complexity": "Medium",
+      "browser_memory_estimate_mb": 0.06,
+      "num_candles": 1000,
+      "scale_name": "\ub300\uaddc\ubaa8 (1000 \uce94\ub4e4)"
+    }
+  ],
+  "summary": {
+    "total_tests": 6,
+    "successful_tests": 6,
+    "failed_tests": 0
+  }
+}

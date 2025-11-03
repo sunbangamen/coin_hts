@@ -84,26 +84,74 @@ class VolumeZoneBreakoutStrategy(Strategy):
         signals: List[Signal] = []
         signal_indices: List[int] = []
 
-        # 슬라이딩 윈도우로 매물대 계산 및 신호 생성
-        for i in range(volume_window, len(df)):
-            # 윈도우 설정
-            window_start = i - volume_window
-            window_df = df.iloc[window_start:i]
+        # Phase 3-2-1 최적화: 증분 윈도우 계산
+        # 초기 window 계산 (처음 volume_window개 캔들)
+        initial_window_df = df.iloc[0:volume_window]
+        bin_volumes, bins = self._calculate_bin_volumes(
+            initial_window_df,
+            num_bins=num_bins,
+            include_wicks=include_wicks,
+        )
 
-            # 매물대(Volume Profile) 계산
-            resistance_price = self._calculate_resistance(
-                window_df,
+        # numpy 배열로 변환 (빠른 접근용)
+        open_prices = df['open'].values
+        close_prices = df['close'].values
+        high_prices = df['high'].values
+        low_prices = df['low'].values
+        volumes = df['volume'].values
+
+        if not include_wicks:
+            low_prices = np.minimum(open_prices, close_prices)
+            high_prices = np.maximum(open_prices, close_prices)
+
+        # 슬라이딩 윈도우로 매물대 계산 및 신호 생성 (증분 방식)
+        for i in range(volume_window, len(df)):
+            # Phase 3-2-1 최적화: 나가는 캔들 제거 (증분 계산)
+            if i > volume_window:
+                exit_idx = i - volume_window - 1
+                exit_candle_low = low_prices[exit_idx]
+                exit_candle_high = high_prices[exit_idx]
+                exit_volume = volumes[exit_idx]
+                exit_height = exit_candle_high - exit_candle_low
+
+                self._remove_candle_from_bins(
+                    bin_volumes,
+                    bins,
+                    exit_candle_low,
+                    exit_candle_high,
+                    exit_volume,
+                    exit_height,
+                )
+
+            # Phase 3-2-1 최적화: 새 캔들 추가 (증분 계산)
+            enter_idx = i - 1
+            enter_candle_low = low_prices[enter_idx]
+            enter_candle_high = high_prices[enter_idx]
+            enter_volume = volumes[enter_idx]
+            enter_height = enter_candle_high - enter_candle_low
+
+            self._add_candle_to_bins(
+                bin_volumes,
+                bins,
+                enter_candle_low,
+                enter_candle_high,
+                enter_volume,
+                enter_height,
+            )
+
+            # 매물대(Volume Profile)에서 저항선 계산 (증분으로 유지된 bin_volumes 사용)
+            resistance_price = self._get_resistance_from_bins(
+                bin_volumes,
+                bins,
                 top_percentile=top_percentile,
-                num_bins=num_bins,
-                include_wicks=include_wicks,
             )
 
             if resistance_price is None:
                 continue
 
             # 현재 캔들 데이터
-            current_close = df.loc[i, 'close']
-            current_high = df.loc[i, 'high']
+            current_close = close_prices[i]
+            current_high = high_prices[i]
 
             # 돌파 조건 확인
             breakout_level = resistance_price * (1 + breakout_buffer)
@@ -121,9 +169,8 @@ class VolumeZoneBreakoutStrategy(Strategy):
 
                 exit_price = df.iloc[exit_idx]['close']
 
-                # 수익률 계산
                 # 신호 객체 생성
-                # confidence는 breakout 강도로 설정 (얼마나 많이 돌파했는지)
+                # confidence는 breakout 강도로 설정
                 breakout_strength = (current_high - breakout_level) / breakout_level
                 confidence = min(0.5 + breakout_strength, 1.0)  # 0.5 ~ 1.0 범위
 
@@ -176,6 +223,204 @@ class VolumeZoneBreakoutStrategy(Strategy):
         )
 
         return result
+
+    def _calculate_bin_volumes(
+        self,
+        df: pd.DataFrame,
+        num_bins: int,
+        include_wicks: bool,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        주어진 데이터에서 bin별 거래량 계산
+
+        Phase 3-2-1 최적화: 증분 윈도우 계산을 위해 추출
+
+        Args:
+            df (pd.DataFrame): OHLCV 데이터
+            num_bins (int): bin 수
+            include_wicks (bool): wick 포함 여부
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: (bin_volumes, bins)
+        """
+        if df.empty:
+            return np.zeros(num_bins), np.array([0.0, 1.0])
+
+        # 가격 범위 결정
+        if include_wicks:
+            price_min = df['low'].min()
+            price_max = df['high'].max()
+        else:
+            price_min = df['open'].min()
+            price_max = max(df['close'].max(), df['open'].max())
+
+        if price_min == price_max:
+            return np.zeros(num_bins), np.array([price_min, price_min + 1])
+
+        # 가격 구간 생성
+        bins = np.linspace(price_min, price_max, num_bins + 1)
+        bin_volumes = np.zeros(num_bins)
+
+        # numpy 배열로 변환
+        open_prices = df['open'].values
+        close_prices = df['close'].values
+        volumes = df['volume'].values
+
+        if include_wicks:
+            low_prices = df['low'].values
+            high_prices = df['high'].values
+        else:
+            low_prices = np.minimum(open_prices, close_prices)
+            high_prices = np.maximum(open_prices, close_prices)
+
+        candle_heights = high_prices - low_prices
+
+        # 각 캔들 처리
+        for i in range(len(df)):
+            candle_low = low_prices[i]
+            candle_high = high_prices[i]
+            volume = volumes[i]
+            candle_height = candle_heights[i]
+
+            if candle_height == 0:
+                center = (candle_low + candle_high) / 2
+                bin_idx = np.searchsorted(bins, center, side='right') - 1
+                bin_idx = max(0, min(bin_idx, num_bins - 1))
+                bin_volumes[bin_idx] += volume
+            else:
+                # searchsorted로 overlap bin 범위 찾기
+                start_bin = np.searchsorted(bins, candle_low, side='right') - 1
+                end_bin = np.searchsorted(bins, candle_high, side='left')
+                start_bin = max(0, start_bin)
+                end_bin = min(num_bins, end_bin)
+
+                for bin_idx in range(start_bin, end_bin):
+                    bin_start = bins[bin_idx]
+                    bin_end = bins[bin_idx + 1]
+                    overlap_start = max(candle_low, bin_start)
+                    overlap_end = min(candle_high, bin_end)
+
+                    if overlap_start < overlap_end:
+                        overlap_ratio = (overlap_end - overlap_start) / candle_height
+                        bin_volumes[bin_idx] += volume * overlap_ratio
+
+        return bin_volumes, bins
+
+    def _add_candle_to_bins(
+        self,
+        bin_volumes: np.ndarray,
+        bins: np.ndarray,
+        candle_low: float,
+        candle_high: float,
+        volume: float,
+        candle_height: float,
+    ) -> None:
+        """
+        캔들을 bin_volumes에 추가 (증분 계산용)
+
+        Args:
+            bin_volumes (np.ndarray): bin 거래량 배열 (수정됨)
+            bins (np.ndarray): bin 경계 배열
+            candle_low, candle_high: 캔들 범위
+            volume: 캔들 거래량
+            candle_height: 캔들 높이
+        """
+        if candle_height == 0:
+            center = (candle_low + candle_high) / 2
+            bin_idx = np.searchsorted(bins, center, side='right') - 1
+            bin_idx = max(0, min(bin_idx, len(bin_volumes) - 1))
+            bin_volumes[bin_idx] += volume
+        else:
+            start_bin = np.searchsorted(bins, candle_low, side='right') - 1
+            end_bin = np.searchsorted(bins, candle_high, side='left')
+            start_bin = max(0, start_bin)
+            end_bin = min(len(bin_volumes), end_bin)
+
+            for bin_idx in range(start_bin, end_bin):
+                bin_start = bins[bin_idx]
+                bin_end = bins[bin_idx + 1]
+                overlap_start = max(candle_low, bin_start)
+                overlap_end = min(candle_high, bin_end)
+
+                if overlap_start < overlap_end:
+                    overlap_ratio = (overlap_end - overlap_start) / candle_height
+                    bin_volumes[bin_idx] += volume * overlap_ratio
+
+    def _remove_candle_from_bins(
+        self,
+        bin_volumes: np.ndarray,
+        bins: np.ndarray,
+        candle_low: float,
+        candle_high: float,
+        volume: float,
+        candle_height: float,
+    ) -> None:
+        """
+        캔들을 bin_volumes에서 제거 (증분 계산용)
+
+        Args:
+            bin_volumes (np.ndarray): bin 거래량 배열 (수정됨)
+            bins (np.ndarray): bin 경계 배열
+            candle_low, candle_high: 캔들 범위
+            volume: 캔들 거래량
+            candle_height: 캔들 높이
+        """
+        if candle_height == 0:
+            center = (candle_low + candle_high) / 2
+            bin_idx = np.searchsorted(bins, center, side='right') - 1
+            bin_idx = max(0, min(bin_idx, len(bin_volumes) - 1))
+            bin_volumes[bin_idx] -= volume
+        else:
+            start_bin = np.searchsorted(bins, candle_low, side='right') - 1
+            end_bin = np.searchsorted(bins, candle_high, side='left')
+            start_bin = max(0, start_bin)
+            end_bin = min(len(bin_volumes), end_bin)
+
+            for bin_idx in range(start_bin, end_bin):
+                bin_start = bins[bin_idx]
+                bin_end = bins[bin_idx + 1]
+                overlap_start = max(candle_low, bin_start)
+                overlap_end = min(candle_high, bin_end)
+
+                if overlap_start < overlap_end:
+                    overlap_ratio = (overlap_end - overlap_start) / candle_height
+                    bin_volumes[bin_idx] -= volume * overlap_ratio
+
+    def _get_resistance_from_bins(
+        self,
+        bin_volumes: np.ndarray,
+        bins: np.ndarray,
+        top_percentile: float,
+    ) -> Optional[float]:
+        """
+        bin_volumes에서 저항선 계산
+
+        Args:
+            bin_volumes (np.ndarray): bin별 거래량
+            bins (np.ndarray): bin 경계
+            top_percentile (float): 상위 백분위
+
+        Returns:
+            Optional[float]: 저항선 가격
+        """
+        total_volume = bin_volumes.sum()
+
+        if total_volume == 0:
+            return None
+
+        # 가장 높은 가격부터 누적
+        cumulative_from_top = 0.0
+        threshold_volume = total_volume * top_percentile
+
+        for bin_idx in range(len(bin_volumes) - 1, -1, -1):
+            cumulative_from_top += bin_volumes[bin_idx]
+
+            if cumulative_from_top >= threshold_volume:
+                resistance = bins[bin_idx]
+                return resistance
+
+        # 기본값
+        return bins[-1]
 
     def _calculate_resistance(
         self,
