@@ -106,40 +106,7 @@ class VolumeZoneBreakoutStrategy(Strategy):
 
         # 슬라이딩 윈도우로 매물대 계산 및 신호 생성 (증분 방식)
         for i in range(volume_window, len(df)):
-            # Phase 3-2-1 최적화: 나가는 캔들 제거 (증분 계산)
-            if i > volume_window:
-                exit_idx = i - volume_window - 1
-                exit_candle_low = low_prices[exit_idx]
-                exit_candle_high = high_prices[exit_idx]
-                exit_volume = volumes[exit_idx]
-                exit_height = exit_candle_high - exit_candle_low
-
-                self._remove_candle_from_bins(
-                    bin_volumes,
-                    bins,
-                    exit_candle_low,
-                    exit_candle_high,
-                    exit_volume,
-                    exit_height,
-                )
-
-            # Phase 3-2-1 최적화: 새 캔들 추가 (증분 계산)
-            enter_idx = i - 1
-            enter_candle_low = low_prices[enter_idx]
-            enter_candle_high = high_prices[enter_idx]
-            enter_volume = volumes[enter_idx]
-            enter_height = enter_candle_high - enter_candle_low
-
-            self._add_candle_to_bins(
-                bin_volumes,
-                bins,
-                enter_candle_low,
-                enter_candle_high,
-                enter_volume,
-                enter_height,
-            )
-
-            # 매물대(Volume Profile)에서 저항선 계산 (증분으로 유지된 bin_volumes 사용)
+            # 현재 window:[i - volume_window, ..., i-1]에 대한 저항선 계산
             resistance_price = self._get_resistance_from_bins(
                 bin_volumes,
                 bins,
@@ -182,6 +149,38 @@ class VolumeZoneBreakoutStrategy(Strategy):
                 )
                 signals.append(signal)
                 signal_indices.append(i)
+
+            # 다음 반복을 위해 윈도우 슬라이드 (가장 오래된 캔들 제거, 새로운 캔들 추가)
+            if i + 1 < len(df):
+                exit_idx = i - volume_window
+                exit_candle_low = low_prices[exit_idx]
+                exit_candle_high = high_prices[exit_idx]
+                exit_volume = volumes[exit_idx]
+                exit_height = exit_candle_high - exit_candle_low
+
+                self._remove_candle_from_bins(
+                    bin_volumes,
+                    bins,
+                    exit_candle_low,
+                    exit_candle_high,
+                    exit_volume,
+                    exit_height,
+                )
+
+                enter_idx = i
+                enter_candle_low = low_prices[enter_idx]
+                enter_candle_high = high_prices[enter_idx]
+                enter_volume = volumes[enter_idx]
+                enter_height = enter_candle_high - enter_candle_low
+
+                self._add_candle_to_bins(
+                    bin_volumes,
+                    bins,
+                    enter_candle_low,
+                    enter_candle_high,
+                    enter_volume,
+                    enter_height,
+                )
 
         if not signals:
             logger.warning("No signals generated for volume_zone_breakout strategy")
