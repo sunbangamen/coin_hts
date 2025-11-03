@@ -27,9 +27,9 @@ class VolumeZoneBreakoutStrategy(Strategy):
     상위 매물대를 돌파하는 신호를 감지합니다.
 
     Parameters:
-        volume_window (int): 매물대 형성 윈도우 (기본값: 60)
+        volume_window (int): 매물대 형성 윈도우 (기본값: 10, 최적화됨)
         top_percentile (float): 상위 백분위 (기본값: 0.2, 즉 상위 20%)
-        breakout_buffer (float): 돌파 버퍼 비율 (기본값: 0.01, 즉 1%)
+        breakout_buffer (float): 돌파 버퍼 비율 (기본값: 0.0, 즉 0%, 최적화됨)
         hold_period_bars (int): 신호 후 보유 바 수 (기본값: 1)
         num_bins (int): 가격 구간 수 (기본값: 20)
         include_wicks (bool): 고가/저가를 가격 범위에 포함할지 여부 (기본값: True)
@@ -46,9 +46,9 @@ class VolumeZoneBreakoutStrategy(Strategy):
                 - volume: 거래량
 
             params (Dict): 전략 파라미터
-                - volume_window: int (기본값: 60)
+                - volume_window: int (기본값: 10)
                 - top_percentile: float (기본값: 0.2)
-                - breakout_buffer: float (기본값: 0.01)
+                - breakout_buffer: float (기본값: 0.0)
                 - hold_period_bars: int (기본값: 1)
                 - num_bins: int (기본값: 20)
                 - include_wicks: bool (기본값: True)
@@ -60,9 +60,9 @@ class VolumeZoneBreakoutStrategy(Strategy):
             ValueError: 입력 데이터 오류
         """
         # 파라미터 추출 및 기본값 설정
-        volume_window = params.get('volume_window', 60)
+        volume_window = params.get('volume_window', 10)
         top_percentile = params.get('top_percentile', 0.2)
-        breakout_buffer = params.get('breakout_buffer', 0.01)
+        breakout_buffer = params.get('breakout_buffer', 0.0)
         hold_period_bars = params.get('hold_period_bars', 1)
         num_bins = params.get('num_bins', 20)
         include_wicks = params.get('include_wicks', True)

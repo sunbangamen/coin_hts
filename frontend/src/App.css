@@ -540,6 +540,69 @@ tr:hover {
   font-size: 14px;
 }
 
+/* Presets Section */
+.presets-section {
+  margin-bottom: 20px;
+  padding: 20px;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  border-radius: 8px;
+  border-left: 4px solid #2c3e50;
+}
+
+.presets-section > label {
+  display: block;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: #2c3e50;
+  font-size: 14px;
+}
+
+.presets-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.preset-btn {
+  padding: 15px;
+  background: white;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-align: left;
+}
+
+.preset-btn:hover {
+  border-color: #2c3e50;
+  box-shadow: 0 4px 12px rgba(44, 62, 80, 0.15);
+  transform: translateY(-2px);
+}
+
+.preset-btn.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-color: #667eea;
+  color: white;
+}
+
+.preset-btn.active .preset-label,
+.preset-btn.active .preset-description {
+  color: white;
+}
+
+.preset-label {
+  font-weight: 600;
+  color: #2c3e50;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.preset-description {
+  font-size: 12px;
+  color: #666;
+  font-style: italic;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .metrics-grid {
@@ -586,5 +649,18 @@ tr:hover {
 
   .signals-section h3 {
     font-size: 16px;
+  }
+
+  /* Presets Mobile */
+  .presets-section {
+    padding: 15px;
+  }
+
+  .presets-buttons {
+    grid-template-columns: 1fr;
+  }
+
+  .preset-btn {
+    padding: 12px;
   }
 }

@@ -51,13 +51,30 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 class BacktestRequest(BaseModel):
-    """백테스트 요청 모델"""
+    """백테스트 요청 모델
+
+    Phase 2 최적화 적용 (2025-11-03)
+    - volume_zone_breakout: 기본 윈도우 60 → 10, 버퍼 0.01 → 0.0으로 최적화
+    - 출처: docs/coin/mvp/phase2_strategy_optimization.md
+    """
 
     strategy: str = Field(
         ..., description="전략 이름 (volume_long_candle, volume_zone_breakout)"
     )
     params: Dict[str, Any] = Field(
-        default_factory=dict, description="전략 파라미터"
+        default_factory=dict,
+        description="""전략 파라미터 (기본값 자동 적용)
+
+        volume_long_candle:
+          - vol_ma_window: int (기본값: 10, 범위: 1-200)
+          - vol_multiplier: float (기본값: 1.0, 범위: 1.0-10.0)
+          - body_pct: float (기본값: 0.01, 범위: 0.0-1.0)
+
+        volume_zone_breakout (Phase 2 최적화됨):
+          - volume_window: int (기본값: 10, 범위: 1-200, 이전: 60)
+          - top_percentile: float (기본값: 0.2, 범위: 0.0-1.0)
+          - breakout_buffer: float (기본값: 0.0, 범위: 0.0-1.0, 이전: 0.01)
+        """
     )
     symbols: List[str] = Field(
         ..., min_items=1, description="심볼 목록 (예: ['BTC_KRW', 'ETH_KRW'])"
@@ -68,7 +85,7 @@ class BacktestRequest(BaseModel):
     end_date: str = Field(
         ..., description="종료 날짜 (YYYY-MM-DD 형식, KST 기준)"
     )
-    timeframe: str = Field(default="1d", description="타임프레임 (기본값: 1d)")
+    timeframe: str = Field(default="1d", description="타임프레임 (기본값: 1d, 옵션: 1d, 1h, 5m)")
 
     @validator("start_date", "end_date")
     def validate_date_format(cls, v):
@@ -134,17 +151,22 @@ class SymbolResult(BaseModel):
 
 
 class BacktestResponse(BaseModel):
-    """백테스트 응답 모델"""
+    """백테스트 응답 모델
 
-    run_id: str
-    strategy: str
-    params: Dict[str, Any]
-    start_date: str
-    end_date: str
-    timeframe: str
-    symbols: List[SymbolResult]
-    total_signals: int
-    execution_time: float
+    JSON 스키마는 Phase 1에서 검증 완료
+    - 출처: test(integration): Complete Phase 1 End-to-End integration test and validation
+    - JSON 스키마: 9/9 필드 검증 완료
+    """
+
+    run_id: str = Field(..., description="백테스트 실행 ID (UUID)")
+    strategy: str = Field(..., description="사용된 전략명")
+    params: Dict[str, Any] = Field(..., description="실제 적용된 전략 파라미터")
+    start_date: str = Field(..., description="백테스트 시작 날짜 (YYYY-MM-DD)")
+    end_date: str = Field(..., description="백테스트 종료 날짜 (YYYY-MM-DD)")
+    timeframe: str = Field(..., description="사용된 타임프레임")
+    symbols: List[SymbolResult] = Field(..., description="심볼별 백테스트 결과")
+    total_signals: int = Field(..., description="총 신호 개수")
+    execution_time: float = Field(..., description="백테스트 실행 시간 (초)")
 
 
 class ErrorResponse(BaseModel):
@@ -201,16 +223,36 @@ async def list_strategies():
 )
 async def run_backtest(request: BacktestRequest):
     """
-    백테스트 실행
+    백테스트 실행 (Phase 2 최적화 적용)
+
+    주요 기능:
+    - 여러 심볼에 대한 동시 백테스트 실행
+    - 전략별 신호 생성 및 성과 분석
+    - 실시간 검증 및 에러 처리
+
+    Phase 2 최적화:
+    - volume_zone_breakout 기본 파라미터 최적화 완료
+      * volume_window: 60 → 10 (신호 생성: 0개 → 최대 29개)
+      * breakout_buffer: 0.01 → 0.0
+    - 파라미터 튜닝 분석: 100개 조합 테스트, 80% 신호 생성 성공
+    - 참고: docs/coin/mvp/phase2_strategy_optimization.md
 
     Args:
         request (BacktestRequest): 백테스트 요청
+            - strategy: volume_long_candle 또는 volume_zone_breakout
+            - params: 전략별 파라미터 (기본값 자동 적용)
+            - symbols: 심볼 목록
+            - start_date, end_date: 분석 기간
+            - timeframe: 봉 주기 (1d, 1h, 5m)
 
     Returns:
         BacktestResponse: 백테스트 결과
+            - run_id: 실행 고유 ID
+            - 심볼별 신호 및 성과 지표
+            - 실행 시간
 
     Raises:
-        HTTPException: 데이터 로드 실패, 전략 실행 실패 등
+        HTTPException: 데이터 로드 실패, 전략 실행 실패, 파라미터 검증 실패 등
     """
     run_id = str(uuid.uuid4())
     start_time = time.time()
