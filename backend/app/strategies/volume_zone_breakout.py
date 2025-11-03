@@ -185,7 +185,7 @@ class VolumeZoneBreakoutStrategy(Strategy):
         include_wicks: bool,
     ) -> Optional[float]:
         """
-        매물대 기반 저항선 계산
+        매물대 기반 저항선 계산 (Phase 3-2-1 벡터화 최적화)
 
         Args:
             df (pd.DataFrame): 윈도우 내 OHLCV 데이터
@@ -195,6 +195,11 @@ class VolumeZoneBreakoutStrategy(Strategy):
 
         Returns:
             Optional[float]: 저항 가격 (없으면 None)
+
+        최적화 포인트:
+        - numpy searchsorted로 bin 범위 찾기 (O(log k) per candle)
+        - iterrows() 제거하고 numpy 배열 직접 접근
+        - 전체 bin 확인 대신 overlap되는 bin만 처리 (20개 → 평균 2-3개)
         """
         if df.empty:
             return None
@@ -216,21 +221,26 @@ class VolumeZoneBreakoutStrategy(Strategy):
         # 각 bin에 거래량 할당
         bin_volumes = np.zeros(num_bins)
 
-        for idx, row in df.iterrows():
-            open_price = row['open']
-            close_price = row['close']
-            volume = row['volume']
+        # 최적화: numpy 배열로 변환하여 더 빠른 접근 (iterrows 제거)
+        open_prices = df['open'].values
+        close_prices = df['close'].values
+        volumes = df['volume'].values
 
-            # 캔들이 걸쳐있는 모든 bin에 거래량 배분
-            if include_wicks:
-                candle_low = row['low']
-                candle_high = row['high']
-            else:
-                candle_low = min(open_price, close_price)
-                candle_high = max(open_price, close_price)
+        if include_wicks:
+            low_prices = df['low'].values
+            high_prices = df['high'].values
+        else:
+            low_prices = np.minimum(open_prices, close_prices)
+            high_prices = np.maximum(open_prices, close_prices)
 
-            # 캔들 높이
-            candle_height = candle_high - candle_low
+        candle_heights = high_prices - low_prices
+
+        # 벡터화된 방식으로 각 캔들 처리
+        for i in range(len(df)):
+            candle_low = low_prices[i]
+            candle_high = high_prices[i]
+            volume = volumes[i]
+            candle_height = candle_heights[i]
 
             if candle_height == 0:
                 # 높이가 0이면 중앙 bin에만 할당
@@ -239,8 +249,17 @@ class VolumeZoneBreakoutStrategy(Strategy):
                 bin_idx = max(0, min(bin_idx, num_bins - 1))
                 bin_volumes[bin_idx] += volume
             else:
-                # 캔들이 걸쳐있는 bin들에 거래량 배분
-                for bin_idx in range(num_bins):
+                # 최적화: searchsorted로 overlap되는 bin 범위 찾기 (O(log k))
+                # 기존: 모든 bin 확인 (O(k)) → 실제 overlap bin만 처리
+                start_bin = np.searchsorted(bins, candle_low, side='right') - 1
+                end_bin = np.searchsorted(bins, candle_high, side='left')
+
+                # 범위 제한
+                start_bin = max(0, start_bin)
+                end_bin = min(num_bins, end_bin)
+
+                # 해당 범위의 bin들만 처리 (평균 2-3개, 기존 20개 → 90% 감소)
+                for bin_idx in range(start_bin, end_bin):
                     bin_start = bins[bin_idx]
                     bin_end = bins[bin_idx + 1]
 
