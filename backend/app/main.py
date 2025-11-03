@@ -51,13 +51,30 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 class BacktestRequest(BaseModel):
-    """백테스트 요청 모델"""
+    """백테스트 요청 모델
+
+    Phase 2 최적화 적용 (2025-11-03)
+    - volume_zone_breakout: 기본 윈도우 60 → 10, 버퍼 0.01 → 0.0으로 최적화
+    - 출처: docs/coin/mvp/phase2_strategy_optimization.md
+    """
 
     strategy: str = Field(
         ..., description="전략 이름 (volume_long_candle, volume_zone_breakout)"
     )
     params: Dict[str, Any] = Field(
-        default_factory=dict, description="전략 파라미터"
+        default_factory=dict,
+        description="""전략 파라미터 (기본값 자동 적용)
+
+        volume_long_candle:
+          - vol_ma_window: int (기본값: 10, 범위: 1-200)
+          - vol_multiplier: float (기본값: 1.0, 범위: 1.0-10.0)
+          - body_pct: float (기본값: 0.01, 범위: 0.0-1.0)
+
+        volume_zone_breakout (Phase 2 최적화됨):
+          - volume_window: int (기본값: 10, 범위: 1-200, 이전: 60)
+          - top_percentile: float (기본값: 0.2, 범위: 0.0-1.0)
+          - breakout_buffer: float (기본값: 0.0, 범위: 0.0-1.0, 이전: 0.01)
+        """
     )
     symbols: List[str] = Field(
         ..., min_items=1, description="심볼 목록 (예: ['BTC_KRW', 'ETH_KRW'])"
@@ -68,7 +85,7 @@ class BacktestRequest(BaseModel):
     end_date: str = Field(
         ..., description="종료 날짜 (YYYY-MM-DD 형식, KST 기준)"
     )
-    timeframe: str = Field(default="1d", description="타임프레임 (기본값: 1d)")
+    timeframe: str = Field(default="1d", description="타임프레임 (기본값: 1d, 옵션: 1d, 1h, 5m)")
 
     @validator("start_date", "end_date")
     def validate_date_format(cls, v):
@@ -119,6 +136,26 @@ class APISignal(BaseModel):
     return_pct: float = Field(..., description="거래 수익률 (소수점, 예: 0.05 = 5%)")
 
 
+class PerformancePoint(BaseModel):
+    """성과곡선 포인트 (Phase 3 차트용)
+
+    시간대별 누적 수익률 데이터
+    """
+
+    timestamp: str = Field(
+        ...,
+        description="데이터 포인트 날짜 (YYYY-MM-DD)"
+    )
+    equity: float = Field(
+        ...,
+        description="누적 수익률 (소수점, 예: 1.05 = 5% 수익)"
+    )
+    drawdown: Optional[float] = Field(
+        default=None,
+        description="해당 시점의 낙폭 (선택사항)"
+    )
+
+
 class SymbolResult(BaseModel):
     """심볼별 백테스트 결과"""
 
@@ -131,20 +168,63 @@ class SymbolResult(BaseModel):
     avg_return: float
     max_drawdown: float
     avg_hold_bars: float
+    performance_curve: Optional[List[PerformancePoint]] = Field(
+        default=None,
+        description="성과곡선 데이터 (Phase 3 차트용, Equity Curve 라인 차트)"
+    )
+
+
+class MetadataInfo(BaseModel):
+    """메타데이터 정보 (Phase 2 확장)
+
+    백테스트 실행 환경 및 시점 정보를 포함합니다.
+    """
+
+    execution_date: str = Field(
+        ...,
+        description="백테스트 실행 날짜/시간 (ISO 8601 형식, UTC)"
+    )
+    environment: str = Field(
+        default="development",
+        description="실행 환경 (development, staging, production)"
+    )
+    execution_host: str = Field(
+        default="local",
+        description="실행 호스트 정보 (Docker 컨테이너 ID 또는 호스트명)"
+    )
 
 
 class BacktestResponse(BaseModel):
-    """백테스트 응답 모델"""
+    """백테스트 응답 모델 (Phase 2 메타데이터 확장)
 
-    run_id: str
-    strategy: str
-    params: Dict[str, Any]
-    start_date: str
-    end_date: str
-    timeframe: str
-    symbols: List[SymbolResult]
-    total_signals: int
-    execution_time: float
+    JSON 스키마 버전: 1.1.0
+    - Phase 1: 9/9 필드 검증 완료
+    - Phase 2: version, metadata, description 필드 추가
+
+    하위 호환성: version 필드로 스키마 버전 관리
+    """
+
+    version: str = Field(
+        default="1.1.0",
+        description="API 응답 스키마 버전 (semantic versioning, 예: 1.1.0)"
+    )
+    run_id: str = Field(..., description="백테스트 실행 ID (UUID)")
+    strategy: str = Field(..., description="사용된 전략명")
+    params: Dict[str, Any] = Field(..., description="실제 적용된 전략 파라미터")
+    start_date: str = Field(..., description="백테스트 시작 날짜 (YYYY-MM-DD)")
+    end_date: str = Field(..., description="백테스트 종료 날짜 (YYYY-MM-DD)")
+    timeframe: str = Field(..., description="사용된 타임프레임")
+    symbols: List[SymbolResult] = Field(..., description="심볼별 백테스트 결과")
+    total_signals: int = Field(..., description="총 신호 개수")
+    execution_time: float = Field(..., description="백테스트 실행 시간 (초)")
+    metadata: Optional[MetadataInfo] = Field(
+        default=None,
+        description="메타데이터: 실행 환경, 시점 정보 (Phase 2에서 추가됨, 향후 필수화 예정)"
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="백테스트 결과 설명 (선택사항, 예: 테스트 목적, 특이사항 등)"
+    )
 
 
 class ErrorResponse(BaseModel):
@@ -201,16 +281,36 @@ async def list_strategies():
 )
 async def run_backtest(request: BacktestRequest):
     """
-    백테스트 실행
+    백테스트 실행 (Phase 2 최적화 적용)
+
+    주요 기능:
+    - 여러 심볼에 대한 동시 백테스트 실행
+    - 전략별 신호 생성 및 성과 분석
+    - 실시간 검증 및 에러 처리
+
+    Phase 2 최적화:
+    - volume_zone_breakout 기본 파라미터 최적화 완료
+      * volume_window: 60 → 10 (신호 생성: 0개 → 최대 29개)
+      * breakout_buffer: 0.01 → 0.0
+    - 파라미터 튜닝 분석: 100개 조합 테스트, 80% 신호 생성 성공
+    - 참고: docs/coin/mvp/phase2_strategy_optimization.md
 
     Args:
         request (BacktestRequest): 백테스트 요청
+            - strategy: volume_long_candle 또는 volume_zone_breakout
+            - params: 전략별 파라미터 (기본값 자동 적용)
+            - symbols: 심볼 목록
+            - start_date, end_date: 분석 기간
+            - timeframe: 봉 주기 (1d, 1h, 5m)
 
     Returns:
         BacktestResponse: 백테스트 결과
+            - run_id: 실행 고유 ID
+            - 심볼별 신호 및 성과 지표
+            - 실행 시간
 
     Raises:
-        HTTPException: 데이터 로드 실패, 전략 실행 실패 등
+        HTTPException: 데이터 로드 실패, 전략 실행 실패, 파라미터 검증 실패 등
     """
     run_id = str(uuid.uuid4())
     start_time = time.time()
@@ -290,6 +390,25 @@ async def run_backtest(request: BacktestRequest):
                                 )
                             )
 
+                # Equity Curve (성과곡선) 계산 (Phase 3 차트용)
+                performance_curve = None
+                if result.signals and result.returns:
+                    performance_curve = []
+                    cumulative_equity = 1.0
+
+                    for i, signal in enumerate(result.signals):
+                        if i < len(result.returns):
+                            # 반환률을 소수점 형식으로 변환 (% to decimal)
+                            return_pct = result.returns[i] / 100.0
+                            cumulative_equity *= (1.0 + return_pct)
+
+                            performance_curve.append(
+                                PerformancePoint(
+                                    timestamp=signal.timestamp.strftime('%Y-%m-%d'),
+                                    equity=cumulative_equity
+                                )
+                            )
+
                 # 결과 추가
                 symbol_results.append(
                     SymbolResult(
@@ -299,6 +418,7 @@ async def run_backtest(request: BacktestRequest):
                         avg_return=result.avg_return,
                         max_drawdown=result.max_drawdown,
                         avg_hold_bars=result.avg_hold_bars,
+                        performance_curve=performance_curve,
                     )
                 )
                 total_signals += result.samples
@@ -318,8 +438,19 @@ async def run_backtest(request: BacktestRequest):
 
         execution_time = time.time() - start_time
 
+        # 메타데이터 수집 (Phase 2 확장)
+        environment = os.getenv("ENVIRONMENT", "development")
+        execution_host = os.getenv("HOSTNAME", "local")
+
+        metadata = MetadataInfo(
+            execution_date=datetime.utcnow().isoformat() + "Z",  # ISO 8601 UTC 형식
+            environment=environment,
+            execution_host=execution_host,
+        )
+
         # 응답 객체 생성
         response = BacktestResponse(
+            version="1.1.0",
             run_id=run_id,
             strategy=request.strategy,
             params=request.params,
@@ -329,6 +460,8 @@ async def run_backtest(request: BacktestRequest):
             symbols=symbol_results,
             total_signals=total_signals,
             execution_time=execution_time,
+            metadata=metadata,
+            description=None,  # 선택적 필드
         )
 
         # 결과를 JSON 파일로 저장

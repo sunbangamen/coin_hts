@@ -31,6 +31,41 @@ const STRATEGY_PARAMS_CONFIG = {
 
 const TIMEFRAMES = ['1d', '1h', '5m']
 
+// Strategy Presets (from Phase 2 optimization analysis)
+// 출처: docs/coin/mvp/phase2_strategy_optimization.md
+const STRATEGY_PRESETS = {
+  conservative: {
+    label: '보수적 (Low Risk)',
+    description: '신호 품질 우선, 높은 성공률',
+    strategy: 'volume_long_candle',
+    params: {
+      vol_ma_window: 20,
+      vol_multiplier: 1.5,
+      body_pct: 0.01
+    }
+  },
+  balanced: {
+    label: '균형잡힌 (Balanced)',
+    description: '신호와 성공률 균형',
+    strategy: 'volume_zone_breakout',
+    params: {
+      volume_window: 20,
+      top_percentile: 0.20,
+      breakout_buffer: 0.0
+    }
+  },
+  aggressive: {
+    label: '적극적 (Aggressive)',
+    description: '신호량 우선, 다양한 기회 포착',
+    strategy: 'volume_zone_breakout',
+    params: {
+      volume_window: 10,
+      top_percentile: 0.30,
+      breakout_buffer: 0.0
+    }
+  }
+}
+
 /**
  * Generate a summary of validation errors
  * @param {object} errors - Validation errors object
@@ -97,6 +132,19 @@ export default function App() {
       ...formData,
       strategy: newStrategy,
       params: {}
+    }
+    setFormData(updatedFormData)
+    setApiError(null)
+    performRealTimeValidation(updatedFormData)
+  }
+
+  // Handle preset selection
+  const handlePresetClick = (presetKey) => {
+    const preset = STRATEGY_PRESETS[presetKey]
+    const updatedFormData = {
+      ...formData,
+      strategy: preset.strategy,
+      params: { ...preset.params }
     }
     setFormData(updatedFormData)
     setApiError(null)
@@ -248,6 +296,27 @@ export default function App() {
                   {errors.strategy}
                 </div>
               )}
+            </div>
+
+            {/* Strategy Presets */}
+            <div className="presets-section">
+              <label>🎯 추천 프리셋 (파라미터 자동 설정)</label>
+              <div className="presets-buttons">
+                {Object.entries(STRATEGY_PRESETS).map(([key, preset]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`preset-btn ${formData.strategy === preset.strategy &&
+                      JSON.stringify(formData.params) === JSON.stringify(preset.params) ? 'active' : ''}`}
+                    onClick={() => handlePresetClick(key)}
+                    title={preset.description}
+                    aria-label={`${preset.label} 프리셋 적용: ${preset.description}`}
+                  >
+                    <div className="preset-label">{preset.label}</div>
+                    <div className="preset-description">{preset.description}</div>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Symbols Input */}
