@@ -51,6 +51,24 @@ services:
     profiles:
       - test
 
+  # 프론트엔드 개발 서버
+  frontend:
+    image: node:20-bullseye
+    container_name: coin-frontend
+    working_dir: /workspace
+    volumes:
+      - ./frontend:/workspace
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://backend:8000
+      - VITEST_RUNTIME_DIR=/tmp/vitest-runtime
+    command: [ "bash", "-lc", "npm ci && npm run dev -- --host" ]
+    depends_on:
+      - backend
+    profiles:
+      - frontend-dev
+
   # 프론트엔드 유닛 테스트 (Vitest)용 Node 컨테이너
   frontend-test:
     image: node:20-bullseye
@@ -64,4 +82,4 @@ services:
       - VITEST_RUNTIME_DIR=/tmp/vitest-runtime
     command: [ "bash", "-lc", "npm ci && npm run test" ]
     profiles:
-      - frontend
+      - frontend-test

@@ -146,6 +146,8 @@ class VolumeZoneBreakoutStrategy(Strategy):
                 max_drawdown=0.0,
                 avg_hold_bars=0.0,
                 avg_hold_duration=None,
+                entry_exit_pairs=[],  # Step 4 신호 테이블용
+                returns=[],  # Step 4 신호 테이블용
             )
 
         # 공통 함수로 성과 지표 계산
@@ -169,6 +171,8 @@ class VolumeZoneBreakoutStrategy(Strategy):
             max_drawdown=metrics['max_drawdown'],
             avg_hold_bars=metrics['avg_hold_bars'],
             avg_hold_duration=None,
+            entry_exit_pairs=entry_exit_pairs,  # Step 4 신호 테이블용
+            returns=returns,  # Step 4 신호 테이블용
         )
 
         return result

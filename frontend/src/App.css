@@ -220,3 +220,371 @@ tr:hover {
   margin-bottom: 20px;
   font-size: 14px;
 }
+
+/* BacktestResults Component Styles */
+.backtest-results {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.backtest-results.loading,
+.backtest-results.error,
+.backtest-results.empty {
+  background: white;
+  border-radius: 8px;
+  padding: 40px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.backtest-results.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+}
+
+.backtest-results.error {
+  border: 1px solid #f5c6cb;
+  background-color: #f8d7da;
+}
+
+.backtest-results.error h3 {
+  color: #721c24;
+  margin-bottom: 10px;
+}
+
+.backtest-results.error p {
+  color: #721c24;
+}
+
+.backtest-results.empty {
+  border: 1px solid #d1ecf1;
+  background-color: #d1ecf1;
+  color: #0c5460;
+}
+
+.backtest-results.empty p {
+  color: #0c5460;
+  margin: 5px 0;
+}
+
+.backtest-results.empty .hint {
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* Loading spinner */
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #2c3e50;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 15px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Info Section */
+.info-section {
+  background: white;
+  border-radius: 8px;
+  padding: 25px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.info-section h3 {
+  margin-bottom: 20px;
+  color: #2c3e50;
+  font-size: 18px;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.info-item .label {
+  font-weight: 600;
+  color: #666;
+  margin-right: 10px;
+}
+
+.info-item .value {
+  color: #333;
+  font-family: 'Courier New', monospace;
+  word-break: break-all;
+}
+
+/* Metrics Section */
+.metrics-section {
+  background: white;
+  border-radius: 8px;
+  padding: 25px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.metrics-section h3 {
+  margin-bottom: 20px;
+  color: #2c3e50;
+  font-size: 18px;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.metric-card {
+  background: #f9f9f9;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 20px;
+  transition: all 0.3s;
+}
+
+.metric-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: #2c3e50;
+}
+
+.metric-card h4 {
+  margin-bottom: 15px;
+  color: #2c3e50;
+  font-size: 16px;
+  border-bottom: 2px solid #2c3e50;
+  padding-bottom: 10px;
+}
+
+.metric-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  font-size: 14px;
+}
+
+.metric-item .label {
+  font-weight: 500;
+  color: #666;
+  margin-right: 10px;
+}
+
+.metric-item .value {
+  font-weight: 600;
+  color: #333;
+  font-family: 'Courier New', monospace;
+}
+
+.metric-item .value.positive {
+  color: #28a745;
+}
+
+.metric-item .value.negative {
+  color: #dc3545;
+}
+
+.no-data {
+  color: #999;
+  font-style: italic;
+  padding: 20px;
+}
+
+/* Signals Section */
+.signals-section {
+  background: white;
+  border-radius: 8px;
+  padding: 25px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-top: 20px;
+}
+
+.signals-section h3 {
+  margin-bottom: 20px;
+  color: #2c3e50;
+  font-size: 18px;
+}
+
+.symbol-signals-group {
+  margin-bottom: 30px;
+}
+
+.symbol-signals-group h4 {
+  margin-bottom: 15px;
+  color: #34495e;
+  font-size: 16px;
+  border-bottom: 2px solid #e0e0e0;
+  padding-bottom: 10px;
+}
+
+.no-signals-for-symbol {
+  color: #999;
+  font-style: italic;
+  padding: 15px;
+}
+
+.coming-soon {
+  color: #999;
+  font-style: italic;
+  padding: 20px;
+  text-align: center;
+}
+
+/* Signals Table */
+.signals-table-container {
+  overflow-x: auto;
+  margin: 0;
+}
+
+.signals-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0;
+  font-size: 14px;
+}
+
+.signals-table thead {
+  background-color: #f8f9fa;
+  border-bottom: 2px solid #dee2e6;
+}
+
+.signals-table th,
+.signals-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.signals-table th {
+  font-weight: 600;
+  color: #333;
+  cursor: pointer;
+  user-select: none;
+}
+
+.signals-table th:hover {
+  background-color: #e9ecef;
+}
+
+.signals-table tbody tr {
+  transition: background-color 0.2s ease;
+}
+
+.signals-table tbody tr:hover {
+  background-color: #f5f5f5;
+}
+
+.signal-row.buy {
+  background-color: #f0f8ff;
+}
+
+.signal-row.sell {
+  background-color: #fff0f0;
+}
+
+.signals-table .type {
+  font-weight: 600;
+  padding: 2px 6px;
+}
+
+.signals-table .type.buy {
+  color: #007bff;
+}
+
+.signals-table .type.sell {
+  color: #dc3545;
+}
+
+.signals-table .price {
+  text-align: right;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+}
+
+.signals-table .return {
+  font-weight: 600;
+}
+
+.signals-table .return.positive {
+  color: #28a745;
+}
+
+.signals-table .return.negative {
+  color: #dc3545;
+}
+
+.signals-table .return.neutral {
+  color: #6c757d;
+}
+
+.signals-empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #999;
+  font-size: 14px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-card {
+    padding: 15px;
+  }
+
+  .backtest-results.loading,
+  .backtest-results.error,
+  .backtest-results.empty {
+    padding: 20px;
+  }
+
+  /* Signals Table Mobile */
+  .signals-table {
+    font-size: 12px;
+  }
+
+  .signals-table th,
+  .signals-table td {
+    padding: 8px 12px;
+  }
+
+  .signals-table-container {
+    overflow-x: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+  }
+
+  .symbol-signals-group h4 {
+    font-size: 14px;
+  }
+
+  .signals-section {
+    padding: 15px;
+  }
+
+  .signals-section h3 {
+    font-size: 16px;
+  }
+}

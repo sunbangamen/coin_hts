@@ -58,6 +58,8 @@ class BacktestResult:
         max_drawdown (float): 최대 낙폭 (%)
         avg_hold_bars (float): 평균 보유 바 수
         avg_hold_duration (Optional[pd.Timedelta]): 평균 보유 시간 (타임프레임이 명확할 때만 계산)
+        entry_exit_pairs (Optional[List[tuple]]): (진입가, 청산가) 쌍 (Step 4 API용)
+        returns (Optional[List[float]]): 거래 수익률 배열 (%) (Step 4 API용)
     """
     signals: List[Signal]
     samples: int
@@ -66,6 +68,8 @@ class BacktestResult:
     max_drawdown: float  # 최대 낙폭 (%)
     avg_hold_bars: float  # 평균 보유 바 수
     avg_hold_duration: Optional[pd.Timedelta] = None  # 타임프레임이 명확할 때만 사용
+    entry_exit_pairs: Optional[List[tuple]] = None  # (진입가, 청산가) 쌍 - Step 4 신호 테이블용
+    returns: Optional[List[float]] = None  # 거래 수익률 (%) - Step 4 신호 테이블용
 
     def __post_init__(self):
         """결과 데이터 검증"""

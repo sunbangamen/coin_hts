@@ -154,6 +154,8 @@ class VolumeLongCandleStrategy(Strategy):
             max_drawdown=metrics['max_drawdown'],
             avg_hold_bars=metrics['avg_hold_bars'],
             avg_hold_duration=None,
+            entry_exit_pairs=entry_exit_pairs,  # Step 4 신호 테이블용
+            returns=returns,  # Step 4 신호 테이블용
         )
 
         return result

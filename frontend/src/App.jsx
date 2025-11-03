@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import axios from 'axios'
 import './App.css'
+import BacktestResults from './components/BacktestResults'
 import {
   validateSymbols,
   validateDateRange,
@@ -383,47 +384,14 @@ export default function App() {
         </div>
 
         {/* Results Section */}
-        {showResult && result && (
-          <div className="results-container">
-            <h2>백테스트 결과</h2>
-            <div className="result-summary">
-              <p><strong>전략:</strong> {STRATEGIES[result.strategy]}</p>
-              <p><strong>기간:</strong> {result.start_date} ~ {result.end_date}</p>
-              <p><strong>총 신호:</strong> {result.total_signals}</p>
-              <p><strong>실행 시간:</strong> {result.execution_time.toFixed(2)}초</p>
-            </div>
-
-            <h3>심볼별 결과</h3>
-            {result.symbols && result.symbols.length > 0 ? (
-              <table>
-                <thead>
-                  <tr>
-                    <th>심볼</th>
-                    <th>신호 수</th>
-                    <th>승률</th>
-                    <th>평균 수익률</th>
-                    <th>최대 낙폭</th>
-                    <th>평균 보유 바</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.symbols.map(symbol => (
-                    <tr key={symbol.symbol}>
-                      <td>{symbol.symbol}</td>
-                      <td>{symbol.signals}</td>
-                      <td>{(symbol.win_rate * 100).toFixed(2)}%</td>
-                      <td>{(symbol.avg_return * 100).toFixed(2)}%</td>
-                      <td>{(symbol.max_drawdown * 100).toFixed(2)}%</td>
-                      <td>{symbol.avg_hold_bars.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p>결과 데이터가 없습니다.</p>
-            )}
-          </div>
-        )}
+        <div className="results-container">
+          <h2>백테스트 결과</h2>
+          <BacktestResults
+            result={showResult ? result : null}
+            loading={loading}
+            error={apiError}
+          />
+        </div>
       </main>
     </div>
   )

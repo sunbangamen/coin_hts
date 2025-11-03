@@ -104,11 +104,29 @@ class BacktestRequest(BaseModel):
         return v
 
 
+class APISignal(BaseModel):
+    """
+    API 응답용 거래 신호 모델 (Step 4 신호 테이블용)
+
+    각 개별 거래 신호의 상세 정보를 포함합니다.
+    """
+
+    symbol: str = Field(..., description="거래 심볼 (예: BTC_KRW)")
+    type: str = Field(..., description="신호 타입: 'buy' 또는 'sell'")
+    timestamp: str = Field(..., description="신호 발생 시간 (ISO 8601, UTC)")
+    entry_price: float = Field(..., description="진입 가격 (KRW)")
+    exit_price: float = Field(..., description="청산 가격 (KRW)")
+    return_pct: float = Field(..., description="거래 수익률 (소수점, 예: 0.05 = 5%)")
+
+
 class SymbolResult(BaseModel):
     """심볼별 백테스트 결과"""
 
     symbol: str
-    signals: int
+    signals: List[APISignal] = Field(
+        default_factory=list,
+        description="개별 거래 신호 목록 (Step 4 신호 테이블용)"
+    )
     win_rate: float
     avg_return: float
     max_drawdown: float
@@ -253,11 +271,30 @@ async def run_backtest(request: BacktestRequest):
                     f"signals={result.samples}, strategy_time={strategy_time:.2f}s"
                 )
 
+                # 내부 Signal을 API용 APISignal로 변환 (Step 4 신호 테이블용)
+                api_signals: List[APISignal] = []
+                if result.signals and result.entry_exit_pairs and result.returns:
+                    for i, signal in enumerate(result.signals):
+                        if i < len(result.entry_exit_pairs) and i < len(result.returns):
+                            entry_price, exit_price = result.entry_exit_pairs[i]
+                            return_pct = result.returns[i] / 100.0  # % 형식에서 소수점 형식으로 변환
+
+                            api_signals.append(
+                                APISignal(
+                                    symbol=symbol,
+                                    type=signal.side.lower(),  # BUY -> buy, SELL -> sell
+                                    timestamp=signal.timestamp.isoformat(),  # ISO 8601 형식
+                                    entry_price=entry_price,
+                                    exit_price=exit_price,
+                                    return_pct=return_pct,
+                                )
+                            )
+
                 # 결과 추가
                 symbol_results.append(
                     SymbolResult(
                         symbol=symbol,
-                        signals=result.samples,
+                        signals=api_signals,
                         win_rate=result.win_rate,
                         avg_return=result.avg_return,
                         max_drawdown=result.max_drawdown,
