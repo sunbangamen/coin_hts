@@ -303,6 +303,89 @@ class TestPositionClosing:
         # realized_pnl = 0.1 * (49000 - 50000) - 50 = -100 - 50 = -150
         assert trade_args['realized_pnl'] == -150.0
 
+    @pytest.mark.asyncio
+    async def test_close_position_with_auto_slippage(self):
+        """슬리피지 자동 계산 검증"""
+        manager = PositionManager()
+        mock_db = Mock(spec=DatabaseManager)
+
+        manager.db = mock_db
+        mock_db.update_position_on_close.return_value = None
+        mock_db.insert_trade.return_value = 456
+
+        # 오픈 포지션 설정
+        position = Position(
+            position_id=123,
+            symbol='KRW-BTC',
+            strategy_name='strategy1',
+            entry_time=datetime.now(),
+            entry_price=50000.0,
+            quantity=0.1,
+            fee_amount=50.0,
+        )
+        manager.positions['KRW-BTC:strategy1'] = position
+
+        # slippage_amount를 명시하지 않음 (자동 계산 테스트)
+        await manager.close_position(
+            symbol='KRW-BTC',
+            strategy_name='strategy1',
+            exit_price=51000.0,
+            timestamp=datetime.now(),
+        )
+
+        # 슬리피지가 자동 계산되었는지 검증
+        trade_args = mock_db.insert_trade.call_args[1]
+
+        # 자동 계산된 슬리피지 = exit_price * quantity * slippage_rate
+        # = 51000 * 0.1 * 0.0002 = 1.02
+        expected_slippage = 51000.0 * 0.1 * 0.0002
+
+        assert abs(trade_args['slippage_amount'] - expected_slippage) < 0.01
+
+        # realized_pnl = 0.1 * (51000 - 50000) - 50 - 1.02 = 100 - 50 - 1.02 = 48.98
+        expected_pnl = 100.0 - 50.0 - expected_slippage
+        assert abs(trade_args['realized_pnl'] - expected_pnl) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_close_position_with_explicit_slippage(self):
+        """명시적 슬리피지 값 제공 검증"""
+        manager = PositionManager()
+        mock_db = Mock(spec=DatabaseManager)
+
+        manager.db = mock_db
+        mock_db.update_position_on_close.return_value = None
+        mock_db.insert_trade.return_value = 456
+
+        # 오픈 포지션 설정
+        position = Position(
+            position_id=123,
+            symbol='KRW-BTC',
+            strategy_name='strategy1',
+            entry_time=datetime.now(),
+            entry_price=50000.0,
+            quantity=0.1,
+            fee_amount=50.0,
+        )
+        manager.positions['KRW-BTC:strategy1'] = position
+
+        # 명시적 슬리피지 값 전달
+        explicit_slippage = 5.0
+        await manager.close_position(
+            symbol='KRW-BTC',
+            strategy_name='strategy1',
+            exit_price=51000.0,
+            timestamp=datetime.now(),
+            slippage_amount=explicit_slippage,
+        )
+
+        # 전달된 슬리피지가 사용되었는지 검증
+        trade_args = mock_db.insert_trade.call_args[1]
+        assert trade_args['slippage_amount'] == explicit_slippage
+
+        # realized_pnl = 0.1 * (51000 - 50000) - 50 - 5.0 = 100 - 50 - 5.0 = 45.0
+        expected_pnl = 100.0 - 50.0 - explicit_slippage
+        assert trade_args['realized_pnl'] == expected_pnl
+
 
 class TestUnrealizedPnLUpdate:
     """미실현 손익 업데이트 테스트"""

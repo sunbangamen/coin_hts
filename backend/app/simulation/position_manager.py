@@ -208,7 +208,7 @@ class PositionManager:
         strategy_name: str,
         exit_price: float,
         timestamp: datetime,
-        slippage_amount: float = 0.0,
+        slippage_amount: Optional[float] = None,
     ) -> Optional[int]:
         """
         포지션 청산
@@ -218,7 +218,7 @@ class PositionManager:
             strategy_name: 전략 이름
             exit_price: 청산 가격
             timestamp: 청산 시간
-            slippage_amount: 슬리피지 금액 (선택사항)
+            slippage_amount: 슬리피지 금액 (선택사항, None이면 자동 계산)
 
         Returns:
             거래 ID (성공 시) 또는 None (실패 시)
@@ -232,6 +232,21 @@ class PositionManager:
                 return None
 
             position = self.positions[key]
+
+            # 슬리피지 자동 계산 (미제공 시)
+            if slippage_amount is None:
+                if self.slippage_rate <= 0 or position.quantity <= 0:
+                    slippage_amount = 0.0
+                else:
+                    slippage_amount = exit_price * position.quantity * self.slippage_rate
+                logger.debug(
+                    f"Auto-calculated slippage for {key}: {slippage_amount:.2f} "
+                    f"(rate={self.slippage_rate*100:.4f}%)"
+                )
+            else:
+                if slippage_amount < 0:
+                    logger.warning(f"Negative slippage amount for {key}, setting to 0")
+                    slippage_amount = 0.0
 
             # 실현 손익 계산
             realized_pnl = (

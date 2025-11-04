@@ -361,6 +361,7 @@ class TradeHistoryResponse(BaseModel):
     total_realized_pnl: float = Field(..., description="총 실현 손익")
     win_count: int = Field(..., description="수익 거래 개수")
     lose_count: int = Field(..., description="손실 거래 개수")
+    win_rate: float = Field(..., description="승률 (0.0 ~ 1.0, 예: 0.65 = 65%)")
 
 
 # ============================================================================
@@ -1114,6 +1115,8 @@ async def get_trade_history(
         lose_count = sum(
             1 for t in trades if t.get('realized_pnl', 0) < 0
         )
+        # 승률 계산 (0.0 ~ 1.0)
+        win_rate = (win_count / len(trades)) if trades else 0.0
 
         # Pydantic 모델로 변환
         trade_responses = [
@@ -1123,7 +1126,8 @@ async def get_trade_history(
 
         logger.info(
             f"Trade history retrieved: count={len(trades)}, "
-            f"total_pnl={total_realized_pnl:.2f}, win_rate={win_count}/{len(trades)}"
+            f"total_pnl={total_realized_pnl:.2f}, win_rate={win_rate:.2%}, "
+            f"wins={win_count}, losses={lose_count}"
         )
 
         return TradeHistoryResponse(
@@ -1133,6 +1137,7 @@ async def get_trade_history(
             total_realized_pnl=round(total_realized_pnl, 2),
             win_count=win_count,
             lose_count=lose_count,
+            win_rate=round(win_rate, 4),
         )
 
     except Exception as e:
