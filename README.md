@@ -293,11 +293,164 @@ def load_ohlcv_data(
 
 ---
 
+## Phase 3: 비동기 태스크 큐 (운영 안정성)
+
+**Phase 3**에서는 장시간 실행되는 백테스트를 비동기로 처리하기 위한 인프라를 추가했습니다.
+
+### 비동기 백테스트 실행
+
+#### 1. 비동기 모드로 백테스트 실행
+```bash
+# 비동기 백테스트 요청
+curl -X POST http://localhost:8000/api/backtests/run-async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "strategy": "volume_zone_breakout",
+    "symbols": ["BTC_KRW", "ETH_KRW"],
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31"
+  }'
+
+# 응답 (202 Accepted)
+{
+  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "queued",
+  "created_at": "2025-11-04T10:30:45.123456Z"
+}
+```
+
+#### 2. 작업 상태 조회 (폴링)
+```bash
+# 작업 상태 조회
+curl http://localhost:8000/api/backtests/status/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+# 응답: 대기 중
+{
+  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "queued",
+  "progress": 0.0,
+  "result": null,
+  "error": null
+}
+
+# 응답: 실행 중
+{
+  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "running",
+  "progress": 0.45,
+  "result": null,
+  "error": null
+}
+
+# 응답: 완료됨
+{
+  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "completed",
+  "progress": 1.0,
+  "result": { /* BacktestResponse */ },
+  "error": null
+}
+```
+
+### 비동기 인프라 구성
+
+#### Redis 서비스
+```bash
+# Redis 상태 확인
+redis-cli ping
+
+# Redis 메모리 모니터링
+redis-cli INFO memory
+```
+
+#### 워커 실행
+```bash
+# Docker 환경에서 워커 실행
+docker-compose --profile worker up worker
+
+# 로컬 환경에서 워커 실행
+python -m rq worker -c backend.app.config --verbose
+```
+
+### 결과 파일 관리
+
+비동기 백테스트 결과는 다음 구조로 저장됩니다:
+
+```
+${DATA_ROOT}/tasks/
+├── <task_id_1>/
+│   ├── manifest.json         # 작업 메타데이터
+│   └── result.json           # 백테스트 결과
+├── <task_id_2>/
+│   ├── manifest.json
+│   └── result.json
+└── ...
+```
+
+#### manifest.json 예시
+```json
+{
+  "task_id": "abc123-def456",
+  "status": "completed",
+  "strategy": "volume_zone_breakout",
+  "metadata": {
+    "started_at": "2025-11-04T10:30:45Z",
+    "finished_at": "2025-11-04T10:35:20Z",
+    "duration_ms": 275000,
+    "environment": "production"
+  },
+  "summary": {
+    "total_signals": 45,
+    "symbols_processed": 2,
+    "symbols_failed": 0
+  },
+  "error": {
+    "occurred": false,
+    "message": null
+  }
+}
+```
+
+### 결과 파일 정리
+
+오래된 결과를 자동으로 정리합니다:
+
+```bash
+# TTL 기반 정리 (7일 이상 된 파일)
+python scripts/cleanup_task_results.py
+
+# 정리 시뮬레이션 (실제 삭제 없음)
+python scripts/cleanup_task_results.py --dry-run
+
+# 커스텀 TTL 설정 (30일)
+python scripts/cleanup_task_results.py --ttl-days 30
+```
+
+### 환경 변수
+
+```bash
+# 데이터 루트 (기본값: /data)
+DATA_ROOT=/data
+
+# Redis 설정
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_DB=0
+
+# 실행 환경
+ENVIRONMENT=development
+
+# 태스크 결과 보존 기간 (일)
+TASK_RESULT_TTL_DAYS=7
+```
+
+---
+
 ## 버전 정보
 
-- **프로젝트 단계**: Phase 1 (백테스트 엔진 기초)
-- **이슈**: Issue #1 - 백엔드 데이터 로더 구현
-- **상태**: ✅ 완료 (단계 5: 통합 테스트 및 문서화)
+- **프로젝트 단계**: Phase 3 (운영 안정성 - 비동기 큐)
+- **이슈**: Issue #15 - MVP 운영 안정성 확보
+- **상태**: ✅ 완료 (Step 1-5: 구현 + 테스트 + 문서화)
 
 ---
 

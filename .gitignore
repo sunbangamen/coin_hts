@@ -31,3 +31,8 @@ Thumbs.db
 # Test and build logs
 *.log
 test-results/
+
+# Environment configuration
+.env
+.env.local
+.env.*.local
