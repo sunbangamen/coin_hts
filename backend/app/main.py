@@ -17,6 +17,10 @@ import time
 
 from backend.app.data_loader import load_ohlcv_data
 from backend.app.strategy_factory import StrategyFactory
+from backend.app.task_manager import TaskManager, TaskStatus
+from backend.app.jobs import run_backtest_job
+from rq import Queue
+from backend.app.config import redis_conn
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
@@ -37,6 +41,9 @@ app.add_middleware(
 # 환경변수
 DATA_ROOT = os.getenv("DATA_ROOT", "/data")
 RESULTS_DIR = os.path.join(DATA_ROOT, "results")
+
+# RQ 큐 초기화
+rq_queue = Queue(connection=redis_conn)
 
 # 로거 설정
 logging.basicConfig(
@@ -234,6 +241,24 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class AsyncBacktestResponse(BaseModel):
+    """비동기 백테스트 응답 모델"""
+
+    task_id: str = Field(..., description="작업 ID (UUID)")
+    status: str = Field(..., description="작업 상태 (queued, running, completed, failed)")
+    created_at: str = Field(..., description="작업 생성 시간 (ISO 8601)")
+
+
+class TaskStatusResponse(BaseModel):
+    """작업 상태 조회 응답 모델"""
+
+    task_id: str = Field(..., description="작업 ID")
+    status: str = Field(..., description="작업 상태 (queued, running, completed, failed)")
+    progress: float = Field(..., description="진행률 (0.0 ~ 1.0)")
+    result: Optional[Dict[str, Any]] = Field(default=None, description="백테스트 결과 (완료 시)")
+    error: Optional[str] = Field(default=None, description="에러 메시지 (실패 시)")
+
+
 # ============================================================================
 # 엔드포인트
 # ============================================================================
@@ -245,8 +270,10 @@ async def root():
         "message": "Coin Backtesting API",
         "version": "1.0.0",
         "endpoints": {
-            "POST /api/backtests/run": "Run backtest",
+            "POST /api/backtests/run": "Run backtest (synchronous)",
+            "POST /api/backtests/run-async": "Run backtest (asynchronous, returns task_id)",
             "GET /api/backtests/{run_id}": "Get backtest result",
+            "GET /api/backtests/status/{task_id}": "Get async task status",
             "GET /api/strategies": "List supported strategies",
             "GET /health": "Health check",
         },
@@ -540,4 +567,131 @@ async def get_backtest_result(run_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to read result: {str(e)}",
+        )
+
+
+# ============================================================================
+# 비동기 API 엔드포인트 (Phase 3 - 운영 안정성)
+# ============================================================================
+
+@app.post(
+    "/api/backtests/run-async",
+    response_model=AsyncBacktestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def run_backtest_async(request: BacktestRequest):
+    """
+    비동기 백테스트 실행 (Phase 3 비동기 큐 구현)
+
+    장시간 실행되는 백테스트를 비동기로 처리합니다.
+    요청이 수락되면 즉시 task_id를 반환하고,
+    백그라운드에서 백테스트가 실행됩니다.
+
+    Args:
+        request (BacktestRequest): 백테스트 요청
+
+    Returns:
+        AsyncBacktestResponse: task_id와 상태 정보
+            - task_id: 작업 ID (UUID)
+            - status: 작업 상태 (queued)
+            - created_at: 작업 생성 시간
+    """
+    try:
+        # 작업 생성
+        task_id = TaskManager.create_task(
+            strategy=request.strategy,
+            params=request.params,
+            symbols=request.symbols,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            timeframe=request.timeframe,
+        )
+
+        logger.info(f"[{task_id}] Async backtest task created")
+
+        # RQ 큐에 작업 추가
+        try:
+            job = rq_queue.enqueue(
+                run_backtest_job,
+                task_id=task_id,
+                strategy=request.strategy,
+                params=request.params,
+                symbols=request.symbols,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                timeframe=request.timeframe,
+                job_id=task_id,  # 작업 ID를 task_id로 설정
+            )
+            logger.info(f"[{task_id}] Job enqueued to RQ: {job.id}")
+        except Exception as e:
+            logger.error(f"[{task_id}] Failed to enqueue job: {e}")
+            TaskManager.set_error(task_id, f"Failed to enqueue job: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to enqueue backtest job: {str(e)}",
+            )
+
+        # 응답
+        task = TaskManager.get_task(task_id)
+        return AsyncBacktestResponse(
+            task_id=task_id,
+            status=task.get("status", TaskStatus.QUEUED.value),
+            created_at=task.get("created_at"),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in async backtest: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/backtests/status/{task_id}",
+    response_model=TaskStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_task_status(task_id: str):
+    """
+    비동기 작업 상태 조회 (Phase 3 비동기 큐 구현)
+
+    진행 중인 백테스트 작업의 상태, 진행률, 결과를 조회합니다.
+
+    Args:
+        task_id (str): 작업 ID (UUID)
+
+    Returns:
+        TaskStatusResponse: 작업 상태 정보
+            - status: queued, running, completed, failed
+            - progress: 진행률 (0.0 ~ 1.0)
+            - result: 완료 시 백테스트 결과
+            - error: 실패 시 에러 메시지
+
+    Raises:
+        HTTPException: 작업을 찾을 수 없음
+    """
+    try:
+        task_status = TaskManager.get_status(task_id)
+
+        if not task_status:
+            logger.warning(f"Task not found: {task_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task not found: {task_id}",
+            )
+
+        logger.info(f"[{task_id}] Status retrieved: {task_status['status']}")
+
+        return TaskStatusResponse(**task_status)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[{task_id}] Error retrieving task status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving task status: {str(e)}",
         )

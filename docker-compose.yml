@@ -1,4 +1,19 @@
 services:
+  # Redis 서비스 (비동기 태스크 큐용)
+  redis:
+    image: redis:7-alpine
+    container_name: coin-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: .
@@ -8,6 +23,8 @@ services:
     # 환경 변수
     environment:
       - DATA_ROOT=/data
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - TZ=Asia/Seoul
       - PYTHONUNBUFFERED=1
 
@@ -25,8 +42,37 @@ services:
     # 작업 디렉터리
     working_dir: /app
 
+    # 네트워크 의존성
+    depends_on:
+      redis:
+        condition: service_healthy
+
     # FastAPI 서버 실행 명령
     command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # RQ 워커 (비동기 백테스트 작업 처리)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coin-worker
+    environment:
+      - DATA_ROOT=/data
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/data
+      - ./backend:/app/backend
+      - ./scripts:/app/scripts
+    working_dir: /app
+    command: ["python", "-m", "rq", "worker", "-c", "backend.app.config", "--verbose"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - worker
 
   # 테스트 실행용 서비스 (선택사항)
   test:
@@ -86,3 +132,7 @@ services:
     command: [ "bash", "-lc", "npm ci && npm run test" ]
     profiles:
       - frontend-test
+
+volumes:
+  redis-data:
+    driver: local
