@@ -194,6 +194,59 @@ class TestStrategyInitialization:
         mock_strategy.initialize_with_history.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_initialize_strategy_with_unordered_data(self):
+        """뒤섞인 시간 순서의 캔들 데이터로 초기화 검증 (DESC 쿼리 결과 시뮬레이션)"""
+        runner = StrategyRunner()
+
+        # Mock 설정
+        mock_db = AsyncMock(spec=DatabaseManager)
+        mock_strategy = Mock()
+        mock_strategy.min_history_window = 5
+        mock_strategy.initialize_with_history = Mock()
+
+        # DESC 순서로 반환되는 샘플 캔들 데이터 (최신부터)
+        sample_candles = [
+            {'timestamp': datetime(2024, 1, 10), 'open': 110.0, 'high': 111.0, 'low': 109.0, 'close': 110.5, 'volume': 10000.0},
+            {'timestamp': datetime(2024, 1, 9), 'open': 109.0, 'high': 110.0, 'low': 108.0, 'close': 109.5, 'volume': 9000.0},
+            {'timestamp': datetime(2024, 1, 8), 'open': 108.0, 'high': 109.0, 'low': 107.0, 'close': 108.5, 'volume': 8000.0},
+            {'timestamp': datetime(2024, 1, 7), 'open': 107.0, 'high': 108.0, 'low': 106.0, 'close': 107.5, 'volume': 7000.0},
+            {'timestamp': datetime(2024, 1, 6), 'open': 106.0, 'high': 107.0, 'low': 105.0, 'close': 106.5, 'volume': 6000.0},
+        ]
+
+        mock_db.fetch_all_async.return_value = sample_candles
+
+        # StrategyRunner 설정
+        config = StrategyConfig('KRW-BTC', 'volume_zone_breakout', {})
+        config.strategy_instance = mock_strategy
+        runner.db = mock_db
+        runner.strategies['KRW-BTC:volume_zone_breakout'] = config
+
+        # 초기화 실행
+        await runner.initialize_strategy('KRW-BTC', 'volume_zone_breakout')
+
+        # 검증 1: 초기화 완료
+        assert config.is_initialized is True
+
+        # 검증 2: initialize_with_history 호출 확인
+        mock_strategy.initialize_with_history.assert_called_once()
+
+        # 검증 3: 전달된 DataFrame이 오름차순으로 정렬되어 있는지 확인
+        called_args = mock_strategy.initialize_with_history.call_args
+        df = called_args[0][0]  # 첫 번째 위치 인자인 DataFrame
+
+        # DataFrame의 timestamp 컬럼이 오름차순인지 검증
+        timestamps = df['timestamp'].tolist()
+        assert timestamps == sorted(timestamps), \
+            f"DataFrame timestamps not in ascending order: {timestamps}"
+
+        # 가장 오래된 데이터와 가장 최신 데이터 확인
+        assert df['timestamp'].min() == datetime(2024, 1, 6), "Earliest timestamp mismatch"
+        assert df['timestamp'].max() == datetime(2024, 1, 10), "Latest timestamp mismatch"
+
+        # 데이터 개수 확인
+        assert len(df) == 5, f"Expected 5 candles, got {len(df)}"
+
+    @pytest.mark.asyncio
     async def test_initialize_strategy_not_registered(self):
         """등록되지 않은 전략 초기화 시도 검증"""
         runner = StrategyRunner()

@@ -128,12 +128,13 @@ class StrategyRunner:
             if not self.db:
                 raise RuntimeError("Database not initialized")
 
+            # 최신 캔들부터 min_window개만 조회 (DESC)
             recent_candles = await self.db.fetch_all_async(
                 """
                 SELECT timestamp, open, high, low, close, volume
                 FROM market_candles
                 WHERE symbol = %s AND timeframe = '1m'
-                ORDER BY timestamp ASC
+                ORDER BY timestamp DESC
                 LIMIT %s
                 """,
                 (symbol, min_window)
@@ -149,6 +150,17 @@ class StrategyRunner:
             import pandas as pd
             df = pd.DataFrame(recent_candles)
             df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+            # DESC로 가져온 데이터를 ASC로 다시 정렬 (전략은 과거→현재 순서로 데이터를 받아야 함)
+            df = df.sort_values('timestamp').reset_index(drop=True)
+
+            # 초기화 데이터 범위 로깅
+            earliest_timestamp = df['timestamp'].min()
+            latest_timestamp = df['timestamp'].max()
+            logger.debug(
+                f"Strategy initialized with {len(recent_candles)} candles for {symbol}:{strategy_name} "
+                f"(range: {earliest_timestamp} to {latest_timestamp}): {key}"
+            )
 
             config.strategy_instance.initialize_with_history(df, config.params)
             config.is_initialized = True
