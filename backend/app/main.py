@@ -22,6 +22,7 @@ from backend.app.jobs import run_backtest_job
 from rq import Queue
 from backend.app.config import redis_conn
 from backend.app.simulation.simulation_orchestrator import get_orchestrator, close_orchestrator
+from backend.app.simulation.position_manager import get_position_manager
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
@@ -310,6 +311,59 @@ class SimulationStrategiesResponse(BaseModel):
 
 
 # ============================================================================
+# 포지션 관리 관련 Pydantic 모델 (Phase 3)
+# ============================================================================
+
+class PositionResponse(BaseModel):
+    """오픈 포지션 정보"""
+    position_id: int = Field(..., description="포지션 ID")
+    symbol: str = Field(..., description="거래 심볼")
+    strategy_name: str = Field(..., description="전략 이름")
+    entry_time: str = Field(..., description="진입 시간 (ISO 8601)")
+    entry_price: float = Field(..., description="진입 가격")
+    quantity: float = Field(..., description="포지션 수량")
+    current_price: float = Field(..., description="현재 가격")
+    unrealized_pnl: float = Field(..., description="미실현 손익")
+    unrealized_pnl_pct: float = Field(..., description="미실현 손익률 (%)")
+    fee_amount: float = Field(..., description="수수료")
+
+
+class PositionListResponse(BaseModel):
+    """포지션 목록 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    positions: List[PositionResponse] = Field(default_factory=list, description="포지션 목록")
+    count: int = Field(..., description="포지션 개수")
+    total_unrealized_pnl: float = Field(..., description="총 미실현 손익")
+
+
+class TradeResponse(BaseModel):
+    """거래(클로즈된 포지션) 정보"""
+    id: int = Field(..., description="거래 ID")
+    symbol: str = Field(..., description="거래 심볼")
+    strategy_name: str = Field(..., description="전략 이름")
+    entry_time: str = Field(..., description="진입 시간 (ISO 8601)")
+    entry_price: float = Field(..., description="진입 가격")
+    exit_time: str = Field(..., description="청산 시간 (ISO 8601)")
+    exit_price: float = Field(..., description="청산 가격")
+    quantity: float = Field(..., description="수량")
+    realized_pnl: float = Field(..., description="실현 손익")
+    realized_pnl_pct: float = Field(..., description="실현 손익률 (%)")
+    fee_amount: float = Field(..., description="수수료")
+    slippage_amount: float = Field(..., description="슬리피지 금액")
+    hold_duration: Optional[str] = Field(None, description="보유 기간")
+
+
+class TradeHistoryResponse(BaseModel):
+    """거래 이력 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    trades: List[TradeResponse] = Field(default_factory=list, description="거래 목록")
+    count: int = Field(..., description="거래 개수")
+    total_realized_pnl: float = Field(..., description="총 실현 손익")
+    win_count: int = Field(..., description="수익 거래 개수")
+    lose_count: int = Field(..., description="손실 거래 개수")
+
+
+# ============================================================================
 # 엔드포인트
 # ============================================================================
 
@@ -330,6 +384,8 @@ async def root():
             "POST /api/simulation/stop": "Stop real-time simulation (Phase 2)",
             "GET /api/simulation/status": "Get simulation status (Phase 2)",
             "GET /api/simulation/strategies": "Get registered simulation strategies (Phase 2)",
+            "GET /api/simulation/positions": "Get current open positions (Phase 3)",
+            "GET /api/simulation/history": "Get closed trades history (Phase 3)",
         },
     }
 
@@ -956,4 +1012,132 @@ async def get_simulation_strategies():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get simulation strategies: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/positions",
+    response_model=PositionListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_positions(symbol: Optional[str] = None):
+    """
+    현재 오픈 포지션 조회
+
+    현재 시뮬레이션에 오픈되어 있는 모든 포지션을 조회합니다.
+
+    Args:
+        symbol: 심볼 필터 (선택사항, 예: 'KRW-BTC')
+
+    Returns:
+        PositionListResponse: 포지션 목록 및 통계
+
+    Raises:
+        HTTPException: 포지션 조회 실패
+    """
+    try:
+        position_manager = get_position_manager()
+        positions = position_manager.get_open_positions(symbol=symbol)
+
+        # 총 미실현 손익 계산
+        total_unrealized_pnl = sum(
+            p['unrealized_pnl'] for p in positions
+        )
+
+        # Pydantic 모델로 변환
+        position_responses = [
+            PositionResponse(**position)
+            for position in positions
+        ]
+
+        logger.info(f"Positions retrieved: count={len(positions)}")
+
+        return PositionListResponse(
+            session_id=position_manager.session_id,
+            positions=position_responses,
+            count=len(positions),
+            total_unrealized_pnl=round(total_unrealized_pnl, 2),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get positions: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get positions: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/history",
+    response_model=TradeHistoryResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_trade_history(
+    symbol: Optional[str] = None,
+    strategy_name: Optional[str] = None,
+    limit: int = 100,
+):
+    """
+    거래 이력 조회
+
+    클로즈된 포지션(완료된 거래)의 이력을 조회합니다.
+
+    Args:
+        symbol: 심볼 필터 (선택사항)
+        strategy_name: 전략명 필터 (선택사항)
+        limit: 조회 개수 제한 (기본: 100, 최대: 1000)
+
+    Returns:
+        TradeHistoryResponse: 거래 이력 목록 및 통계
+
+    Raises:
+        HTTPException: 거래 이력 조회 실패
+    """
+    try:
+        # limit 최대값 제한
+        limit = min(limit, 1000)
+
+        position_manager = get_position_manager()
+        trades = position_manager.get_closed_trades(
+            symbol=symbol,
+            strategy_name=strategy_name,
+            limit=limit,
+        )
+
+        # 통계 계산
+        total_realized_pnl = sum(
+            t.get('realized_pnl', 0) for t in trades
+        )
+        win_count = sum(
+            1 for t in trades if t.get('realized_pnl', 0) > 0
+        )
+        lose_count = sum(
+            1 for t in trades if t.get('realized_pnl', 0) < 0
+        )
+
+        # Pydantic 모델로 변환
+        trade_responses = [
+            TradeResponse(**trade)
+            for trade in trades
+        ]
+
+        logger.info(
+            f"Trade history retrieved: count={len(trades)}, "
+            f"total_pnl={total_realized_pnl:.2f}, win_rate={win_count}/{len(trades)}"
+        )
+
+        return TradeHistoryResponse(
+            session_id=position_manager.session_id,
+            trades=trade_responses,
+            count=len(trades),
+            total_realized_pnl=round(total_realized_pnl, 2),
+            win_count=win_count,
+            lose_count=lose_count,
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get trade history: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get trade history: {str(e)}",
         )

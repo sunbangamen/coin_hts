@@ -10,6 +10,7 @@ from typing import Optional, List, Dict
 
 from backend.app.market_data.market_data_service import MarketDataService, get_market_data_service
 from backend.app.simulation.strategy_runner import StrategyRunner, get_strategy_runner
+from backend.app.simulation.position_manager import PositionManager, get_position_manager
 from backend.app.simulation.websocket_server import (
     get_websocket_server,
     Signal as WSSignal,
@@ -32,6 +33,7 @@ class SimulationOrchestrator:
     def __init__(self):
         self.market_data_service: Optional[MarketDataService] = None
         self.strategy_runner: Optional[StrategyRunner] = None
+        self.position_manager: Optional[PositionManager] = None
         self.ws_server = get_websocket_server()
         self.db = get_db()
         self.is_running = False
@@ -90,6 +92,11 @@ class SimulationOrchestrator:
             await self.strategy_runner.initialize(self.session_id)
             self.strategy_runner.set_signal_callback(self._on_signal)
 
+            # 3-1. PositionManager 초기화
+            self.position_manager = get_position_manager()
+            await self.position_manager.initialize(self.session_id)
+            logger.info("PositionManager initialized")
+
             # 4. 전략 등록 및 초기화
             for symbol, strategy_configs in strategies.items():
                 for config in strategy_configs:
@@ -128,6 +135,17 @@ class SimulationOrchestrator:
             if self.strategy_runner:
                 await self.strategy_runner.stop()
 
+            # PositionManager 정리
+            if self.position_manager:
+                # 포지션 요약 로깅
+                summary = self.position_manager.get_position_summary()
+                logger.info(
+                    f"Final position summary: "
+                    f"open_count={summary['open_positions_count']}, "
+                    f"unrealized_pnl={summary['total_unrealized_pnl']}"
+                )
+                self.position_manager = None
+
             # 세션 상태 업데이트
             if self.session_id:
                 self.db.update_session_status(self.session_id, 'STOPPED')
@@ -141,13 +159,17 @@ class SimulationOrchestrator:
         """
         캔들 완성 시 처리 (MarketDataService 콜백)
 
-        캔들 → StrategyRunner 전달
+        캔들 → StrategyRunner 전달 + 포지션 미실현 손익 업데이트
         """
         try:
             if not self.strategy_runner or not self.is_running:
                 return
 
-            # 전략 실행
+            # 1. 포지션 미실현 손익 업데이트
+            if self.position_manager:
+                await self.position_manager.update_unrealized_pnl(candle)
+
+            # 2. 전략 실행
             await self.strategy_runner.process_candle(candle)
 
         except Exception as e:
@@ -157,13 +179,17 @@ class SimulationOrchestrator:
         """
         신호 생성 시 처리 (StrategyRunner 콜백)
 
-        신호 → WebSocket 브로드캐스트
+        신호 → PositionManager (포지션 진입/청산) → WebSocket 브로드캐스트
         """
         try:
             if not self.is_running:
                 return
 
-            # WebSocket으로 클라이언트에 브로드캐스트
+            # 1. PositionManager에 신호 전달 (포지션 진입/청산 처리)
+            if self.position_manager:
+                await self.position_manager.on_signal(signal, symbol, strategy_name)
+
+            # 2. WebSocket으로 클라이언트에 브로드캐스트
             ws_signal = WSSignal(
                 timestamp=signal.timestamp.isoformat(),
                 symbol=symbol,
@@ -177,7 +203,7 @@ class SimulationOrchestrator:
             logger.debug(f"Signal broadcasted: {symbol}:{strategy_name} {signal.side}")
 
         except Exception as e:
-            logger.error(f"Error broadcasting signal: {e}")
+            logger.error(f"Error handling signal: {e}")
 
     def get_simulation_status(self) -> Dict:
         """시뮬레이션 상태 조회"""
