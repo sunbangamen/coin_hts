@@ -21,6 +21,7 @@ from backend.app.task_manager import TaskManager, TaskStatus
 from backend.app.jobs import run_backtest_job
 from rq import Queue
 from backend.app.config import redis_conn
+from backend.app.simulation.simulation_orchestrator import get_orchestrator, close_orchestrator
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
@@ -260,6 +261,55 @@ class TaskStatusResponse(BaseModel):
 
 
 # ============================================================================
+# 실시간 시뮬레이션 관련 Pydantic 모델 (Phase 2)
+# ============================================================================
+
+class StrategyConfig(BaseModel):
+    """전략 설정 모델 (실시간 시뮬레이션용)"""
+    strategy_name: str = Field(..., description="전략 이름 (예: 'volume_zone_breakout')")
+    params: Dict[str, Any] = Field(default_factory=dict, description="전략 파라미터")
+
+
+class SimulationStartRequest(BaseModel):
+    """실시간 시뮬레이션 시작 요청"""
+    symbols: List[str] = Field(..., min_items=1, description="모니터링할 심볼 목록 (예: ['KRW-BTC', 'KRW-ETH'])")
+    strategies: Dict[str, List[StrategyConfig]] = Field(
+        ...,
+        description="""각 심볼의 전략 설정
+        예: {
+            'KRW-BTC': [
+                {'strategy_name': 'volume_zone_breakout', 'params': {'volume_window': 10}},
+                {'strategy_name': 'volume_long_candle', 'params': {'vol_ma_window': 10}}
+            ]
+        }"""
+    )
+
+
+class SimulationStatusResponse(BaseModel):
+    """시뮬레이션 상태 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    is_running: bool = Field(..., description="실행 여부")
+    market_data_status: Optional[Dict[str, Any]] = Field(None, description="마켓 데이터 서비스 상태")
+    strategy_runner_status: Optional[Dict[str, Any]] = Field(None, description="전략 실행 엔진 상태")
+    websocket_clients: int = Field(..., description="연결된 WebSocket 클라이언트 수")
+
+
+class SimulationStrategyResponse(BaseModel):
+    """등록된 전략 정보"""
+    symbol: str = Field(..., description="심볼")
+    strategy_name: str = Field(..., description="전략 이름")
+    params: Dict[str, Any] = Field(..., description="전략 파라미터")
+    is_initialized: bool = Field(..., description="초기화 여부")
+
+
+class SimulationStrategiesResponse(BaseModel):
+    """시뮬레이션 등록 전략 목록 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    strategies: List[SimulationStrategyResponse] = Field(default_factory=list, description="전략 목록")
+    count: int = Field(..., description="전략 개수")
+
+
+# ============================================================================
 # 엔드포인트
 # ============================================================================
 
@@ -276,6 +326,10 @@ async def root():
             "GET /api/backtests/status/{task_id}": "Get async task status",
             "GET /api/strategies": "List supported strategies",
             "GET /health": "Health check",
+            "POST /api/simulation/start": "Start real-time simulation (Phase 2)",
+            "POST /api/simulation/stop": "Stop real-time simulation (Phase 2)",
+            "GET /api/simulation/status": "Get simulation status (Phase 2)",
+            "GET /api/simulation/strategies": "Get registered simulation strategies (Phase 2)",
         },
     }
 
@@ -694,4 +748,212 @@ async def get_task_status(task_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving task status: {str(e)}",
+        )
+
+
+# ============================================================================
+# 실시간 시뮬레이션 API 엔드포인트 (Phase 2)
+# ============================================================================
+
+@app.post(
+    "/api/simulation/start",
+    response_model=SimulationStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def start_simulation(request: SimulationStartRequest):
+    """
+    실시간 시뮬레이션 시작
+
+    마켓 데이터를 수신하여 등록된 전략들을 실시간으로 실행하고,
+    발생한 신호를 WebSocket을 통해 브로드캐스트합니다.
+
+    Args:
+        request (SimulationStartRequest):
+            - symbols: 모니터링할 심볼 목록
+            - strategies: 심볼별 전략 설정
+
+    Returns:
+        SimulationStatusResponse: 시뮬레이션 상태 정보 (session_id 포함)
+
+    Raises:
+        HTTPException: 시뮬레이션 시작 실패
+    """
+    try:
+        orchestrator = get_orchestrator()
+
+        # 이미 실행 중인 경우 에러
+        if orchestrator.is_running:
+            logger.warning("Simulation already running")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Simulation is already running",
+            )
+
+        # 전략 설정 변환 (Pydantic 모델 → dict)
+        strategies_dict = {}
+        for symbol, strategy_configs in request.strategies.items():
+            strategies_dict[symbol] = [
+                {
+                    'strategy_name': config.strategy_name,
+                    'params': config.params,
+                }
+                for config in strategy_configs
+            ]
+
+        logger.info(
+            f"Starting simulation: symbols={request.symbols}, "
+            f"strategy_count={sum(len(v) for v in strategies_dict.values())}"
+        )
+
+        # 시뮬레이션 시작
+        session_id = await orchestrator.start_simulation(
+            symbols=request.symbols,
+            strategies=strategies_dict,
+            redis_client=redis_conn,
+        )
+
+        logger.info(f"Simulation started: session_id={session_id}")
+
+        return orchestrator.get_simulation_status()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start simulation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start simulation: {str(e)}",
+        )
+
+
+@app.post(
+    "/api/simulation/stop",
+    response_model=SimulationStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def stop_simulation():
+    """
+    실시간 시뮬레이션 중지
+
+    모든 서비스를 정리하고 세션을 종료합니다.
+
+    Returns:
+        SimulationStatusResponse: 시뮬레이션 상태 정보 (is_running=False)
+
+    Raises:
+        HTTPException: 시뮬레이션 중지 실패
+    """
+    try:
+        orchestrator = get_orchestrator()
+
+        # 실행 중이지 않은 경우 에러
+        if not orchestrator.is_running:
+            logger.warning("No simulation running")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No simulation is currently running",
+            )
+
+        logger.info(f"Stopping simulation: session_id={orchestrator.session_id}")
+
+        # 시뮬레이션 중지
+        await orchestrator.stop_simulation()
+
+        logger.info("Simulation stopped")
+
+        return orchestrator.get_simulation_status()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to stop simulation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stop simulation: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/status",
+    response_model=SimulationStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_simulation_status():
+    """
+    실시간 시뮬레이션 상태 조회
+
+    현재 시뮬레이션의 실행 상태, 등록된 전략, WebSocket 클라이언트 정보를 반환합니다.
+
+    Returns:
+        SimulationStatusResponse: 시뮬레이션 상태 정보
+
+    Raises:
+        HTTPException: 상태 조회 실패
+    """
+    try:
+        orchestrator = get_orchestrator()
+        status_info = orchestrator.get_simulation_status()
+
+        logger.debug(f"Simulation status retrieved: is_running={status_info['is_running']}")
+
+        return SimulationStatusResponse(**status_info)
+
+    except Exception as e:
+        logger.error(f"Failed to get simulation status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get simulation status: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/strategies",
+    response_model=SimulationStrategiesResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_simulation_strategies():
+    """
+    등록된 시뮬레이션 전략 목록 조회
+
+    현재 시뮬레이션에 등록된 모든 전략의 목록과 설정을 반환합니다.
+
+    Returns:
+        SimulationStrategiesResponse: 전략 목록 및 메타데이터
+
+    Raises:
+        HTTPException: 전략 목록 조회 실패
+    """
+    try:
+        orchestrator = get_orchestrator()
+        strategy_runner = orchestrator.strategy_runner
+
+        if not strategy_runner:
+            logger.warning("Strategy runner not initialized")
+            return SimulationStrategiesResponse(
+                session_id=orchestrator.session_id,
+                strategies=[],
+                count=0,
+            )
+
+        strategies = strategy_runner.get_strategies()
+
+        # Pydantic 모델로 변환
+        strategy_responses = [
+            SimulationStrategyResponse(**strategy)
+            for strategy in strategies
+        ]
+
+        logger.info(f"Strategies retrieved: count={len(strategies)}")
+
+        return SimulationStrategiesResponse(
+            session_id=orchestrator.session_id,
+            strategies=strategy_responses,
+            count=len(strategies),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get simulation strategies: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get simulation strategies: {str(e)}",
         )
