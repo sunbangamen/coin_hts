@@ -2,13 +2,13 @@
 비동기 백테스트 API 엔드포인트 테스트 (Phase 3)
 
 비동기 백테스트 실행, 상태 조회 엔드포인트를 테스트합니다.
+Redis/RQ 실제 인스턴스 없이 모든 테스트가 실행되도록 설계되었습니다.
 """
 
 import pytest
 import json
 import uuid
-import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
 from fastapi.testclient import TestClient
 from backend.app.main import app
@@ -18,12 +18,44 @@ client = TestClient(app)
 
 
 @pytest.fixture
-def mock_redis(monkeypatch):
-    """Redis 연결을 mock합니다 (테스트 환경용)"""
+def async_api_mocks(monkeypatch):
+    """
+    비동기 API 테스트용 통합 픽스처
+
+    Redis 연결, RQ 큐, TaskManager 메서드를 모두 모킹합니다.
+    테스트가 실제 Redis/RQ 인스턴스 없이 실행되도록 보장합니다.
+    """
+    # 1. Redis 연결 모킹
     mock_redis_conn = MagicMock()
+
+    # 2. RQ Queue 모킹
+    mock_queue = MagicMock()
+    mock_job = MagicMock()
+    mock_job.id = None  # 나중에 테스트에서 설정
+    mock_queue.enqueue = MagicMock(return_value=mock_job)
+
+    # 3. TaskManager 메서드 모킹
+    mock_create_task = MagicMock(side_effect=lambda **kwargs: str(uuid.uuid4()))
+    mock_get_status = MagicMock(return_value=None)
+    mock_get_task = MagicMock(return_value=None)
+
+    # 4. monkeypatch로 모킹 적용
     monkeypatch.setattr("backend.app.config.redis_conn", mock_redis_conn)
     monkeypatch.setattr("backend.app.main.redis_conn", mock_redis_conn)
-    return mock_redis_conn
+    monkeypatch.setattr("backend.app.main.rq_queue", mock_queue)
+    monkeypatch.setattr("backend.app.task_manager.TaskManager.create_task", mock_create_task)
+    monkeypatch.setattr("backend.app.task_manager.TaskManager.get_task", mock_get_task)
+    monkeypatch.setattr("backend.app.main.TaskManager.get_status", mock_get_status)
+
+    # 픽스처가 반환하는 모킹 객체들
+    yield {
+        "redis_conn": mock_redis_conn,
+        "queue": mock_queue,
+        "job": mock_job,
+        "create_task": mock_create_task,
+        "get_status": mock_get_status,
+        "get_task": mock_get_task,
+    }
 
 
 class TestAsyncBacktestEndpoints:
@@ -82,8 +114,22 @@ class TestAsyncBacktestEndpoints:
         )
         assert response.status_code == 422  # 날짜 범위 검증 실패
 
-    def test_run_backtest_async_success(self, mock_redis):
-        """비동기 백테스트 성공 테스트"""
+    def test_run_backtest_async_success(self, async_api_mocks):
+        """비동기 백테스트 성공 테스트
+
+        TaskManager.create_task 호출과 Queue.enqueue 호출을 검증합니다.
+        """
+        # 모킹된 TaskManager.create_task 설정
+        test_task_id = str(uuid.uuid4())
+        async_api_mocks["create_task"].return_value = test_task_id
+
+        # 모킹된 TaskManager.get_task 설정
+        async_api_mocks["get_task"].return_value = {
+            "task_id": test_task_id,
+            "status": "queued",
+            "created_at": "2025-11-04T10:30:45Z",
+        }
+
         response = client.post(
             "/api/backtests/run-async",
             json={
@@ -102,7 +148,8 @@ class TestAsyncBacktestEndpoints:
         assert "task_id" in data
         assert "status" in data
         assert "created_at" in data
-        assert data["status"] in ["queued", "running"]
+        assert data["status"] == "queued"
+        assert data["task_id"] == test_task_id
 
         # task_id가 UUID 형식인지 확인
         try:
@@ -110,8 +157,65 @@ class TestAsyncBacktestEndpoints:
         except ValueError:
             pytest.fail(f"Invalid UUID format: {data['task_id']}")
 
-    def test_run_backtest_async_with_params(self, mock_redis):
+        # TaskManager.create_task가 호출되었는지 검증
+        assert async_api_mocks["create_task"].called
+
+        # Queue.enqueue가 호출되었는지 검증
+        assert async_api_mocks["queue"].enqueue.called
+
+        # enqueue 호출 인자 검증
+        enqueue_call_args = async_api_mocks["queue"].enqueue.call_args
+        assert enqueue_call_args is not None
+        # 첫 번째 인자는 작업 함수 (run_backtest_job)
+        # task_id가 포함되어 있어야 함
+        call_kwargs = enqueue_call_args[1]
+        assert call_kwargs.get("task_id") == test_task_id
+
+    def test_run_backtest_async_queue_failure(self, async_api_mocks):
+        """큐 등록 실패 경로 테스트
+
+        Queue.enqueue가 실패할 때 에러 응답을 반환합니다.
+        """
+        # 모킹된 TaskManager.create_task 설정
+        test_task_id = str(uuid.uuid4())
+        async_api_mocks["create_task"].return_value = test_task_id
+
+        # Queue.enqueue 실패 시뮬레이션
+        async_api_mocks["queue"].enqueue.side_effect = Exception("Redis connection error")
+
+        # 모킹된 TaskManager.set_error 설정
+        async_api_mocks["get_task"].return_value = {
+            "task_id": test_task_id,
+            "status": "failed",
+            "error": "Failed to enqueue job: Redis connection error",
+        }
+
+        response = client.post(
+            "/api/backtests/run-async",
+            json={
+                "strategy": "volume_zone_breakout",
+                "symbols": ["BTC_KRW"],
+                "start_date": "2024-01-01",
+                "end_date": "2024-12-31",
+            }
+        )
+
+        # 500 Internal Server Error 응답 확인
+        assert response.status_code == 500
+        data = response.json()
+        assert "detail" in data
+        assert "Failed to enqueue" in data["detail"]
+
+    def test_run_backtest_async_with_params(self, async_api_mocks):
         """커스텀 파라미터를 포함한 비동기 백테스트 테스트"""
+        test_task_id = str(uuid.uuid4())
+        async_api_mocks["create_task"].return_value = test_task_id
+        async_api_mocks["get_task"].return_value = {
+            "task_id": test_task_id,
+            "status": "queued",
+            "created_at": "2025-11-04T10:30:45Z",
+        }
+
         custom_params = {
             "volume_window": 15,
             "top_percentile": 0.25,
@@ -134,9 +238,50 @@ class TestAsyncBacktestEndpoints:
         data = response.json()
         assert "task_id" in data
 
+        # 파라미터가 TaskManager.create_task에 전달되었는지 검증
+        create_task_call_args = async_api_mocks["create_task"].call_args
+        call_kwargs = create_task_call_args[1]
+        assert call_kwargs.get("params") == custom_params
+        assert call_kwargs.get("symbols") == ["BTC_KRW", "ETH_KRW"]
+        assert call_kwargs.get("timeframe") == "1h"
+
 
 class TestTaskStatusEndpoints:
-    """작업 상태 조회 엔드포인트 테스트"""
+    """작업 상태 조회 엔드포인트 테스트
+
+    TaskManager.get_status를 모킹하여 Redis 의존성 없이 테스트합니다.
+    """
+
+    @staticmethod
+    def _mock_get_status_for_task(task_id, status, progress=0.0, result=None, error=None, monkeypatch=None):
+        """
+        특정 task_id에 대해 TaskManager.get_status를 모킹하는 헬퍼 메서드
+
+        Args:
+            task_id: 모킹할 작업 ID
+            status: 작업 상태
+            progress: 진행률 (0.0-1.0)
+            result: 결과 데이터
+            error: 에러 메시지
+            monkeypatch: pytest의 monkeypatch 픽스처
+        """
+        def mock_get_status(tid):
+            if tid == task_id:
+                return {
+                    "task_id": task_id,
+                    "status": status,
+                    "progress": progress,
+                    "result": result,
+                    "error": error,
+                }
+            return None
+
+        if monkeypatch:
+            monkeypatch.setattr(
+                "backend.app.main.TaskManager.get_status",
+                mock_get_status
+            )
+        return mock_get_status
 
     def test_get_task_status_not_found(self):
         """존재하지 않는 작업 조회 테스트"""
@@ -151,21 +296,11 @@ class TestTaskStatusEndpoints:
         """대기 중인 작업 상태 조회 테스트"""
         task_id = str(uuid.uuid4())
 
-        # TaskManager.get_status를 mock
-        def mock_get_status(tid):
-            if tid == task_id:
-                return {
-                    "task_id": task_id,
-                    "status": TaskStatus.QUEUED.value,
-                    "progress": 0.0,
-                    "result": None,
-                    "error": None,
-                }
-            return None
-
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status
+        self._mock_get_status_for_task(
+            task_id,
+            TaskStatus.QUEUED.value,
+            progress=0.0,
+            monkeypatch=monkeypatch,
         )
 
         response = client.get(f"/api/backtests/status/{task_id}")
@@ -182,20 +317,11 @@ class TestTaskStatusEndpoints:
         """실행 중인 작업 상태 조회 테스트"""
         task_id = str(uuid.uuid4())
 
-        def mock_get_status(tid):
-            if tid == task_id:
-                return {
-                    "task_id": task_id,
-                    "status": TaskStatus.RUNNING.value,
-                    "progress": 0.45,
-                    "result": None,
-                    "error": None,
-                }
-            return None
-
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status
+        self._mock_get_status_for_task(
+            task_id,
+            TaskStatus.RUNNING.value,
+            progress=0.45,
+            monkeypatch=monkeypatch,
         )
 
         response = client.get(f"/api/backtests/status/{task_id}")
@@ -217,20 +343,12 @@ class TestTaskStatusEndpoints:
             "execution_time": 5.25,
         }
 
-        def mock_get_status(tid):
-            if tid == task_id:
-                return {
-                    "task_id": task_id,
-                    "status": TaskStatus.COMPLETED.value,
-                    "progress": 1.0,
-                    "result": mock_result,
-                    "error": None,
-                }
-            return None
-
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status
+        self._mock_get_status_for_task(
+            task_id,
+            TaskStatus.COMPLETED.value,
+            progress=1.0,
+            result=mock_result,
+            monkeypatch=monkeypatch,
         )
 
         response = client.get(f"/api/backtests/status/{task_id}")
@@ -248,20 +366,12 @@ class TestTaskStatusEndpoints:
         task_id = str(uuid.uuid4())
         error_message = "Strategy execution failed for BTC_KRW: insufficient data"
 
-        def mock_get_status(tid):
-            if tid == task_id:
-                return {
-                    "task_id": task_id,
-                    "status": TaskStatus.FAILED.value,
-                    "progress": 0.3,
-                    "result": None,
-                    "error": error_message,
-                }
-            return None
-
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status
+        self._mock_get_status_for_task(
+            task_id,
+            TaskStatus.FAILED.value,
+            progress=0.3,
+            error=error_message,
+            monkeypatch=monkeypatch,
         )
 
         response = client.get(f"/api/backtests/status/{task_id}")
@@ -274,11 +384,25 @@ class TestTaskStatusEndpoints:
 
 
 class TestAsyncEndtoEndScenarios:
-    """비동기 end-to-end 시나리오 테스트"""
+    """비동기 end-to-end 시나리오 테스트
 
-    def test_async_workflow_sequence(self, monkeypatch):
-        """비동기 워크플로우 시퀀스 테스트"""
+    Redis/RQ 없이 완전한 비동기 워크플로우를 시뮬레이션합니다.
+    """
+
+    def test_async_workflow_sequence(self, async_api_mocks, monkeypatch):
+        """비동기 워크플로우 시퀀스 테스트
+
+        작업 요청 → 큐 등록 → 상태 폴링 (queued → running → completed) 시퀀스를 검증합니다.
+        """
         # 1. 비동기 백테스트 실행
+        test_task_id = str(uuid.uuid4())
+        async_api_mocks["create_task"].return_value = test_task_id
+        async_api_mocks["get_task"].return_value = {
+            "task_id": test_task_id,
+            "status": "queued",
+            "created_at": "2025-11-04T10:30:45Z",
+        }
+
         response = client.post(
             "/api/backtests/run-async",
             json={
@@ -291,6 +415,7 @@ class TestAsyncEndtoEndScenarios:
 
         assert response.status_code == 202
         task_id = response.json()["task_id"]
+        assert task_id == test_task_id
 
         # 2. 초기 상태 확인 (대기)
         def mock_status_queued(tid):
@@ -312,6 +437,7 @@ class TestAsyncEndtoEndScenarios:
         response = client.get(f"/api/backtests/status/{task_id}")
         assert response.status_code == 200
         assert response.json()["status"] == TaskStatus.QUEUED.value
+        assert response.json()["progress"] == 0.0
 
         # 3. 중간 상태 확인 (실행 중)
         def mock_status_running(tid):
@@ -332,7 +458,9 @@ class TestAsyncEndtoEndScenarios:
 
         response = client.get(f"/api/backtests/status/{task_id}")
         assert response.status_code == 200
-        assert response.json()["status"] == TaskStatus.RUNNING.value
+        data = response.json()
+        assert data["status"] == TaskStatus.RUNNING.value
+        assert data["progress"] == 0.5
 
         # 4. 최종 상태 확인 (완료)
         mock_result = {
@@ -366,3 +494,8 @@ class TestAsyncEndtoEndScenarios:
         assert data["status"] == TaskStatus.COMPLETED.value
         assert data["progress"] == 1.0
         assert data["result"]["total_signals"] == 15
+        assert data["result"]["execution_time"] == 8.5
+
+        # 5. TaskManager.create_task와 Queue.enqueue 호출 검증
+        assert async_api_mocks["create_task"].called
+        assert async_api_mocks["queue"].enqueue.called
