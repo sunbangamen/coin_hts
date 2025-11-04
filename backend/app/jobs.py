@@ -2,7 +2,8 @@
 import logging
 import json
 import os
-from typing import Dict, Any, Callable, Optional
+import time
+from typing import Dict, Any, Callable, Optional, List
 from datetime import datetime
 
 from .data_loader import load_ohlcv_data
@@ -65,6 +66,8 @@ def run_backtest_job(
     data_root = os.getenv("DATA_ROOT", "/data")
     started_at = datetime.utcnow().isoformat() + "Z"
 
+    start_time = time.perf_counter()
+
     try:
         logger.info(f"[Task {task_id}] Starting backtest: {strategy}")
 
@@ -90,7 +93,7 @@ def run_backtest_job(
         TaskManager.set_progress(task_id, 0.2)
 
         # 심볼별 백테스트 실행
-        symbols_result = []
+        symbols_result: List[Dict[str, Any]] = []
         total_signals = 0
         progress_callback = create_progress_callback(task_id)
 
@@ -112,33 +115,83 @@ def run_backtest_job(
                 # 전략 실행
                 result = strategy_instance.run(symbol_df, params)
 
-                # API 응답 포맷 변환
-                symbol_result = {
-                    "symbol": symbol,
-                    "signals": [
+                api_signals: List[Dict[str, Any]] = []
+                performance_curve: Optional[List[Dict[str, Any]]] = None
+
+                if result.signals and result.entry_exit_pairs and result.returns:
+                    cumulative_equity = 1.0
+                    performance_curve = []
+
+                    for i, signal in enumerate(result.signals):
+                        if i >= len(result.entry_exit_pairs) or i >= len(result.returns):
+                            logger.warning(
+                                f"[Task {task_id}] Inconsistent signal data for {symbol} "
+                                f"(index {i})"
+                            )
+                            break
+
+                        entry_price, exit_price = result.entry_exit_pairs[i]
+                        raw_return = result.returns[i]
+                        entry_price_value = (
+                            float(entry_price) if entry_price is not None else None
+                        )
+                        exit_price_value = (
+                            float(exit_price) if exit_price is not None else None
+                        )
+                        return_pct = (
+                            raw_return / 100.0 if raw_return is not None else None
+                        )
+
+                        api_signals.append(
+                            {
+                                "symbol": symbol,
+                                "type": signal.side.lower(),
+                                "timestamp": signal.timestamp.isoformat() + "Z",
+                                "entry_price": entry_price_value,
+                                "exit_price": exit_price_value,
+                                "return_pct": return_pct,
+                            }
+                        )
+
+                        if return_pct is not None:
+                            cumulative_equity *= (1.0 + return_pct)
+                        performance_curve.append(
+                            {
+                                "timestamp": signal.timestamp.strftime("%Y-%m-%d"),
+                                "equity": cumulative_equity,
+                                "drawdown": None,
+                            }
+                        )
+                else:
+                    # 결과에 필수 데이터가 없으면 최소 스키마만 제공
+                    api_signals = [
                         {
                             "symbol": symbol,
-                            "type": "buy" if sig.side == "BUY" else "sell",
+                            "type": sig.side.lower(),
                             "timestamp": sig.timestamp.isoformat() + "Z",
-                            "entry_price": float(sig.price),
+                            "entry_price": float(getattr(sig, "price", 0.0)),
                             "exit_price": None,
                             "return_pct": None,
                         }
-                        for sig in result.signals
-                    ],
+                        for sig in (result.signals or [])
+                    ]
+
+                symbol_result = {
+                    "symbol": symbol,
+                    "signals": api_signals,
                     "win_rate": float(result.win_rate),
                     "avg_return": float(result.avg_return),
                     "max_drawdown": float(result.max_drawdown),
                     "avg_hold_bars": float(result.avg_hold_bars),
-                    "performance_curve": None,  # Step 4에서 추가
+                    "performance_curve": performance_curve,
                 }
 
                 symbols_result.append(symbol_result)
-                total_signals += len(result.signals)
+                total_signals += len(result.signals or [])
 
                 logger.info(
                     f"[Task {task_id}] {symbol} backtest completed: "
-                    f"{len(result.signals)} signals, win_rate={result.win_rate:.2%}"
+                    f"{len(result.signals or [])} signals, win_rate={result.win_rate:.2%}"
                 )
 
             except Exception as e:
@@ -150,6 +203,7 @@ def run_backtest_job(
 
         # 결과 조합
         finished_at = datetime.utcnow().isoformat() + "Z"
+        execution_time = time.perf_counter() - start_time
         result_data = {
             "version": "1.1.0",
             "run_id": task_id,
@@ -160,11 +214,13 @@ def run_backtest_job(
             "timeframe": timeframe,
             "symbols": symbols_result,
             "total_signals": total_signals,
-            "execution_time": None,  # API에서 계산
+            "execution_time": execution_time,
             "metadata": {
                 "execution_date": finished_at,
                 "environment": os.getenv("ENVIRONMENT", "development"),
+                "execution_host": os.getenv("HOSTNAME", "local"),
             },
+            "description": None,
         }
 
         # 결과 파일 저장 (${DATA_ROOT}/tasks/<task_id>/result.json)

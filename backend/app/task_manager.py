@@ -62,7 +62,7 @@ class TaskManager:
             "start_date": start_date,
             "end_date": end_date,
             "timeframe": timeframe,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.utcnow().isoformat() + "Z",
             "progress": 0,
         }
 
