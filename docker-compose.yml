@@ -67,7 +67,7 @@ services:
       - ./backend:/app/backend
       - ./scripts:/app/scripts
     working_dir: /app
-    command: ["python", "-m", "rq", "worker", "-c", "backend.app.config", "--verbose"]
+    command: ["rq", "worker", "-c", "backend.app.config", "--verbose"]
     depends_on:
       redis:
         condition: service_healthy
