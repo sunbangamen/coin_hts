@@ -165,6 +165,13 @@ print_info "- 성과 지표 계산"
 # Docker 네트워크 내 backend 서비스로 자동 연결
 # API URL: http://backend:8000/api (Docker Compose 서비스 DNS name)
 print_info "e2e-test 컨테이너 시작 중..."
+
+# 약간의 네트워크 안정화 대기
+sleep 2
+
+# docker-compose run을 사용하여 일시적인 컨테이너 생성 및 실행
+# --rm: 완료 후 컨테이너 제거
+# -T: TTY 할당 안함 (CI 환경 호환성)
 $DOCKER_COMPOSE run --rm -T e2e-test python scripts/e2e_test_scenarios.py
 E2E_RESULT=$?
 
