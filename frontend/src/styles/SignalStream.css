@@ -43,6 +43,30 @@
   font-size: 14px;
 }
 
+/* Offline Status Banner */
+.signal-offline-banner {
+  background-color: #fff3cd;
+  border-left: 4px solid #ffc107;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #856404;
+}
+
+.offline-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.offline-message {
+  flex: 1;
+  line-height: 1.4;
+}
+
 .signal-list {
   display: flex;
   flex-direction: column;
