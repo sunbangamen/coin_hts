@@ -1066,8 +1066,15 @@ async def get_market_data(symbol: Optional[str] = None, limit: int = 10):
         - 응답이 비어 있으면 시뮬레이션이 아직 데이터를 수집하지 못했거나 실행 중이 아닙니다.
         - 데이터가 있으면 최근 캔들부터 역순으로 정렬됩니다.
     """
+    logger.info("📊 GET /api/simulation/market-data request received")
     try:
+        # Yield to event loop to prevent blocking
+        import asyncio
+        await asyncio.sleep(0)
+
+        logger.info("Calling get_market_data_service...")
         market_data_service = get_market_data_service()
+        logger.info("get_market_data_service returned successfully")
 
         if not market_data_service or not market_data_service.is_running:
             # 시뮬레이션이 실행 중이 아니면 빈 리스트 반환

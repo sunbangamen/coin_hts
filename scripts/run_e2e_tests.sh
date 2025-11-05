@@ -162,8 +162,8 @@ print_info "- 포지션 추적"
 print_info "- 성과 지표 계산"
 
 # backend 컨테이너 내에서 E2E 테스트 실행
-# API URL: http://127.0.0.1:8000 (같은 컨테이너 내 localhost)
-$DOCKER_COMPOSE exec -T backend python scripts/e2e_test_scenarios.py
+# API URL: http://backend:8000 (Docker Compose 네트워크 내 DNS name)
+$DOCKER_COMPOSE exec -T -e E2E_API_URL=http://backend:8000/api -e E2E_WS_URL=ws://backend:8001 backend python scripts/e2e_test_scenarios.py
 E2E_RESULT=$?
 
 if [ $E2E_RESULT -ne 0 ]; then

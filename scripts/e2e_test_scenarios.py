@@ -14,6 +14,7 @@ End-to-End Testing Scenarios for Coin Trading Simulation
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from datetime import datetime
@@ -29,9 +30,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 테스트 설정
+# Docker 내부에서 실행될 때는 'backend'를 사용, 외부에서는 'localhost'를 사용
 TEST_CONFIG = {
-    'api_url': 'http://127.0.0.1:8000/api',
-    'ws_url': 'ws://127.0.0.1:8001',
+    'api_url': os.getenv('E2E_API_URL', 'http://backend:8000/api'),
+    'ws_url': os.getenv('E2E_WS_URL', 'ws://backend:8001'),
     'symbols': ['KRW-BTC', 'KRW-ETH', 'KRW-XRP'],
     'strategy': 'volume_zone_breakout',
     'strategy_params': {
@@ -500,6 +502,13 @@ class E2ETestRunner:
 
 async def main():
     """메인 함수"""
+    # 설정된 URL 로깅
+    logger.info("="*60)
+    logger.info("E2E Test Configuration:")
+    logger.info(f"  API URL: {TEST_CONFIG['api_url']}")
+    logger.info(f"  WS URL: {TEST_CONFIG['ws_url']}")
+    logger.info("="*60)
+
     runner = E2ETestRunner(TEST_CONFIG)
 
     try:
