@@ -402,6 +402,12 @@ async def health_check():
     }
 
 
+@app.get("/api/health")
+async def api_health_check():
+    """API 헬스체크 엔드포인트"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+
 @app.get("/api/strategies")
 async def list_strategies():
     """지원되는 전략 목록 반환"""
