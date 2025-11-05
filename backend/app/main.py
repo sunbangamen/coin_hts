@@ -931,7 +931,7 @@ async def stop_simulation():
         orchestrator = get_orchestrator()
 
         # 실행 중이지 않은 경우 에러
-        if not orchestrator.is_running:
+        if not orchestrator or not orchestrator.is_running:
             logger.warning("No simulation running")
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -940,11 +940,13 @@ async def stop_simulation():
 
         logger.info(f"Stopping simulation: session_id={orchestrator.session_id}")
 
-        # 시뮬레이션 중지
-        await orchestrator.stop_simulation()
+        # 비동기로 중지 (event loop 양보)
+        import asyncio
+        asyncio.create_task(orchestrator.stop_simulation())
 
-        logger.info("Simulation stopped")
+        logger.info("Simulation stop requested")
 
+        # 즉시 상태 반환
         return orchestrator.get_simulation_status()
 
     except HTTPException:
@@ -1066,19 +1068,13 @@ async def get_market_data(symbol: Optional[str] = None, limit: int = 10):
         - 응답이 비어 있으면 시뮬레이션이 아직 데이터를 수집하지 못했거나 실행 중이 아닙니다.
         - 데이터가 있으면 최근 캔들부터 역순으로 정렬됩니다.
     """
-    logger.info("📊 GET /api/simulation/market-data request received")
     try:
-        # Yield to event loop to prevent blocking
-        import asyncio
-        await asyncio.sleep(0)
-
-        logger.info("Calling get_market_data_service...")
+        # Immediately return empty response if service not ready
+        # This prevents event loop blocking when simulation is initializing
         market_data_service = get_market_data_service()
-        logger.info("get_market_data_service returned successfully")
 
         if not market_data_service or not market_data_service.is_running:
             # 시뮬레이션이 실행 중이 아니면 빈 리스트 반환
-            logger.info("Market data service is not running")
             return MarketDataResponse(
                 session_id=None,
                 candles=[],
@@ -1150,6 +1146,16 @@ async def get_positions(symbol: Optional[str] = None):
     """
     try:
         position_manager = get_position_manager()
+
+        # Return empty positions if manager not ready
+        if not position_manager:
+            return PositionListResponse(
+                session_id=None,
+                positions=[],
+                count=0,
+                total_unrealized_pnl=0.0,
+            )
+
         positions = position_manager.get_open_positions(symbol=symbol)
 
         # 총 미실현 손익 계산
@@ -1211,6 +1217,19 @@ async def get_trade_history(
         limit = min(limit, 1000)
 
         position_manager = get_position_manager()
+
+        # Return empty history if manager not ready
+        if not position_manager:
+            return TradeHistoryResponse(
+                session_id=None,
+                trades=[],
+                count=0,
+                total_realized_pnl=0.0,
+                win_rate=0.0,
+                win_count=0,
+                lose_count=0,
+            )
+
         trades = position_manager.get_closed_trades(
             symbol=symbol,
             strategy_name=strategy_name,
