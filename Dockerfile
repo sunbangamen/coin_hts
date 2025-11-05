@@ -10,8 +10,11 @@ ENV DATA_ROOT=/data \
     PYTHONDONTWRITEBYTECODE=1
 
 # 시스템 패키지 설치
+# psycopg2-binary 컴파일을 위한 필수 의존성 포함
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
+    libpq-dev \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # Python 패키지 설치
