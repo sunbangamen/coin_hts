@@ -225,13 +225,18 @@
   grid-column: 2 / 3;
 }
 
+.strategy-panel {
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 1200px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
 
   .signals-panel,
-  .positions-panel {
+  .positions-panel,
+  .strategy-panel {
     grid-column: 1 / -1;
   }
 }

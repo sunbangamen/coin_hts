@@ -3,6 +3,7 @@ import useSimulation from '../hooks/useSimulation';
 import SignalStream from './SignalStream';
 import PositionTable from './PositionTable';
 import ProfitChart from './ProfitChart';
+import StrategyControl from './StrategyControl';
 import '../styles/SimulationDashboard.css';
 
 /**
@@ -397,6 +398,14 @@ export const SimulationDashboard = ({
 
         <div className="dashboard-panel positions-panel">
           <PositionTable positions={mergedPositions} />
+        </div>
+
+        <div className="dashboard-panel strategy-panel">
+          <StrategyControl
+            apiUrl={apiUrl}
+            simulationStatus={mergedSimulationStatus}
+            authenticated={authenticated}
+          />
         </div>
       </div>
 
