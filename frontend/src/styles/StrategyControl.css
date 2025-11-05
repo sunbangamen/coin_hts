@@ -10,12 +10,22 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .strategy-header h2 {
   margin: 0;
   font-size: 18px;
   color: #333;
+  flex: 1;
+}
+
+.strategy-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .strategy-status {
@@ -25,6 +35,30 @@
   border-radius: 12px;
   font-size: 12px;
   font-weight: 500;
+}
+
+.btn-refresh {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-refresh:hover:not(:disabled) {
+  background-color: #0056b3;
+  transform: scale(1.05);
+}
+
+.btn-refresh:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .strategy-status.running {

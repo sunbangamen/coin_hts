@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import '../styles/StrategyControl.css';
 
 /**
  * 전략 제어 컴포넌트
  *
  * 시뮬레이션 중 전략을 모니터링하고 현재 설정을 표시합니다.
- * (시뮬레이션 실행 중에는 읽기 전용)
+ * - 인증 완료 또는 시뮬레이션 시작 시 자동으로 전략 조회
+ * - 시뮬레이션 실행 중에는 30초마다 폴링으로 최신 정보 유지
+ * - 읽기 전용 모드 (수동 새로고침 버튼 제공)
  *
  * @param {string} apiUrl REST API 서버 URL
- * @param {Object} simulationStatus 시뮬레이션 상태
+ * @param {Object} simulationStatus 시뮬레이션 상태 (is_running, session_id 등)
  * @param {boolean} authenticated WebSocket 인증 여부
  */
 
@@ -69,32 +71,107 @@ export const StrategyControl = ({ apiUrl = 'http://localhost:8000/api', simulati
   const [error, setError] = useState(null);
   const [expandedSymbol, setExpandedSymbol] = useState(null);
 
-  // 시뮬레이션 전략 조회
-  useEffect(() => {
-    const fetchStrategies = async () => {
-      if (!authenticated) return;
+  // 중복 요청 방지 & 폴링 타이머 관리
+  const isFetchingRef = useRef(false);
+  const pollingIntervalRef = useRef(null);
 
-      try {
-        setLoading(true);
-        setError(null);
-        const response = await fetch(`${apiUrl}/simulation/strategies`);
-        if (response.ok) {
-          const data = await response.json();
-          console.log('Simulation strategies:', data);
-          setStrategies(data.strategies || []);
+  /**
+   * 전략 정보 조회 (중복 요청 방지)
+   * - 요청 중에는 추가 호출을 무시합니다
+   * - 시뮬레이션 시작 시 또는 폴링 주기마다 자동 실행
+   */
+  const fetchStrategies = useCallback(async () => {
+    // 이미 요청 중이면 스킵 (중복 요청 방지)
+    if (isFetchingRef.current) {
+      console.log('Strategy fetch already in progress, skipping...');
+      return;
+    }
+
+    if (!authenticated) {
+      console.log('Not authenticated yet, skipping strategy fetch');
+      return;
+    }
+
+    try {
+      isFetchingRef.current = true;
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`${apiUrl}/simulation/strategies`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Simulation strategies updated:', data);
+        setStrategies(data.strategies || []);
+      } else {
+        // 503, 504 등 일시적 오류는 다음 폴링까지 재시도
+        if (response.status >= 500) {
+          console.warn(`Server error ${response.status}, will retry on next poll`);
         } else {
           setError('전략 정보를 불러올 수 없습니다');
         }
-      } catch (err) {
-        console.error('Failed to fetch strategies:', err);
-        setError('전략 정보 로드 실패');
-      } finally {
-        setLoading(false);
+      }
+    } catch (err) {
+      console.error('Failed to fetch strategies:', err);
+      setError('전략 정보 로드 실패');
+    } finally {
+      setLoading(false);
+      isFetchingRef.current = false;
+    }
+  }, [apiUrl, authenticated]);
+
+  /**
+   * useEffect: 인증, 시뮬레이션 상태 변화 감지
+   * - 인증 완료 시 즉시 조회
+   * - 시뮬레이션 실행 중일 때만 폴링 활성화 (30초 간격)
+   * - 의존성: authenticated, simulationStatus?.is_running
+   */
+  useEffect(() => {
+    // 폴링 타이머 정리
+    const cleanup = () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+        console.log('Strategy polling stopped');
       }
     };
 
+    // 인증되지 않으면 아무것도 하지 않음
+    if (!authenticated) {
+      cleanup();
+      return;
+    }
+
+    // 인증 완료 또는 시뮬레이션 상태 변화 시 즉시 조회
+    console.log(
+      `Strategy control: authenticated=${authenticated}, is_running=${simulationStatus?.is_running}`
+    );
+
+    // 시뮬레이션 상태가 변할 때 (null → running 또는 running → null)
+    // 이전 에러 메시지를 초기화
+    if (simulationStatus?.is_running === true) {
+      setError(null);
+      console.log('Simulation started, clearing previous errors');
+    }
+
+    // 즉시 조회
     fetchStrategies();
-  }, [apiUrl, authenticated]);
+
+    // 시뮬레이션이 실행 중일 때만 폴링 활성화
+    if (simulationStatus?.is_running === true) {
+      console.log('Starting strategy polling (30 second interval)');
+      pollingIntervalRef.current = setInterval(() => {
+        console.log('Strategy polling interval triggered');
+        fetchStrategies();
+      }, 30000); // 30초마다 폴링
+    } else {
+      cleanup();
+    }
+
+    // 정리 함수: 컴포넌트 언마운트 또는 의존성 변화 시 타이머 정리
+    return () => {
+      cleanup();
+    };
+  }, [authenticated, simulationStatus?.is_running, fetchStrategies]);
 
   // 백분율 변환 함수
   const formatParamValue = (param, value) => {
@@ -126,11 +203,23 @@ export const StrategyControl = ({ apiUrl = 'http://localhost:8000/api', simulati
     <div className="strategy-control">
       <div className="strategy-header">
         <h2>📊 전략 설정</h2>
-        {simulationStatus && (
-          <span className="strategy-status">
-            {simulationStatus.is_running ? '실행 중 (읽기 전용)' : '준비 중'}
-          </span>
-        )}
+        <div className="strategy-header-right">
+          {simulationStatus && (
+            <span className="strategy-status">
+              {simulationStatus.is_running ? '실행 중 (읽기 전용)' : '준비 중'}
+            </span>
+          )}
+          {authenticated && (
+            <button
+              className="btn-refresh"
+              onClick={() => fetchStrategies()}
+              disabled={loading || !authenticated}
+              title="전략 정보를 즉시 새로고침합니다"
+            >
+              🔄 새로고침
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
