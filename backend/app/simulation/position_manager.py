@@ -81,6 +81,9 @@ class PositionManager:
         self.positions: Dict[str, Position] = {}  # (symbol, strategy_name) -> Position
         self.fee_rate = 0.001  # 거래 수수료 0.1%
         self.slippage_rate = 0.0002  # 슬리피지 0.02%
+        self.on_position_opened = None  # 포지션 진입 콜백
+        self.on_position_closed = None  # 포지션 청산 콜백
+        self.on_position_updated = None  # 포지션 미실현 손익 업데이트 콜백
 
     async def initialize(self, session_id: str) -> None:
         """
@@ -96,6 +99,33 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Failed to initialize PositionManager: {e}")
             raise
+
+    def set_position_opened_callback(self, callback) -> None:
+        """
+        포지션 진입 시 호출될 콜백 설정
+
+        Args:
+            callback: async def callback(position: Position) -> None
+        """
+        self.on_position_opened = callback
+
+    def set_position_closed_callback(self, callback) -> None:
+        """
+        포지션 청산 시 호출될 콜백 설정
+
+        Args:
+            callback: async def callback(position: Position, realized_pnl: float, realized_pnl_pct: float) -> None
+        """
+        self.on_position_closed = callback
+
+    def set_position_updated_callback(self, callback) -> None:
+        """
+        포지션 미실현 손익 업데이트 시 호출될 콜백 설정
+
+        Args:
+            callback: async def callback(position: Position) -> None
+        """
+        self.on_position_updated = callback
 
     async def on_signal(
         self, signal: Signal, symbol: str, strategy_name: str, current_candle: Optional[CandleData] = None
@@ -190,6 +220,13 @@ class PositionManager:
                 fee_amount=fee_amount,
             )
             self.positions[key] = position
+
+            # 포지션 진입 콜백 실행
+            if self.on_position_opened:
+                try:
+                    await self.on_position_opened(position)
+                except Exception as e:
+                    logger.error(f"Error in position_opened callback: {e}")
 
             logger.info(
                 f"Position opened: {key} @ {entry_price} (qty: {quantity}, "
@@ -290,6 +327,13 @@ class PositionManager:
             # 메모리에서 포지션 제거
             del self.positions[key]
 
+            # 포지션 청산 콜백 실행
+            if self.on_position_closed:
+                try:
+                    await self.on_position_closed(position, realized_pnl, realized_pnl_pct)
+                except Exception as e:
+                    logger.error(f"Error in position_closed callback: {e}")
+
             logger.info(
                 f"Position closed: {key} @ {exit_price} "
                 f"(PnL: {realized_pnl:.2f}, {realized_pnl_pct:.2f}%) [trade_id: {trade_id}]"
@@ -323,6 +367,13 @@ class PositionManager:
                             position_id=position.position_id,
                             current_price=candle.close,
                         )
+
+                    # 포지션 업데이트 콜백 실행
+                    if self.on_position_updated:
+                        try:
+                            await self.on_position_updated(position)
+                        except Exception as e:
+                            logger.error(f"Error in position_updated callback for {key}: {e}")
 
         except Exception as e:
             logger.error(f"Error updating unrealized PnL for {candle.symbol}: {e}")

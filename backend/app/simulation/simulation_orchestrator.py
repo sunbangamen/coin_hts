@@ -7,6 +7,7 @@ MarketDataService와 StrategyRunner를 통합하여 실시간 시뮬레이션을
 import asyncio
 import logging
 from typing import Optional, List, Dict
+from datetime import datetime
 
 from backend.app.market_data.market_data_service import MarketDataService, get_market_data_service
 from backend.app.simulation.strategy_runner import StrategyRunner, get_strategy_runner
@@ -14,6 +15,8 @@ from backend.app.simulation.position_manager import PositionManager, get_positio
 from backend.app.simulation.websocket_server import (
     get_websocket_server,
     Signal as WSSignal,
+    Position as WSPosition,
+    PerformanceMetrics,
     EventType,
 )
 from backend.app.database import get_db
@@ -95,6 +98,12 @@ class SimulationOrchestrator:
             # 3-1. PositionManager 초기화
             self.position_manager = get_position_manager()
             await self.position_manager.initialize(self.session_id)
+
+            # PositionManager 콜백 설정
+            self.position_manager.set_position_opened_callback(self._on_position_opened)
+            self.position_manager.set_position_closed_callback(self._on_position_closed)
+            self.position_manager.set_position_updated_callback(self._on_position_updated)
+
             logger.info("PositionManager initialized")
 
             # 4. 전략 등록 및 초기화
@@ -204,6 +213,176 @@ class SimulationOrchestrator:
 
         except Exception as e:
             logger.error(f"Error handling signal: {e}")
+
+    async def _on_position_opened(self, position) -> None:
+        """
+        포지션 진입 시 처리 (PositionManager 콜백)
+
+        포지션 정보를 WebSocket으로 브로드캐스트합니다.
+        """
+        try:
+            # position_manager의 Position을 websocket_server의 Position으로 변환
+            ws_position = WSPosition(
+                position_id=position.position_id,
+                symbol=position.symbol,
+                strategy=position.strategy_name,  # strategy_name -> strategy
+                entry_time=position.entry_time.isoformat(),
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                current_price=position.current_price,
+                unrealized_pnl=position.unrealized_pnl,
+                unrealized_pnl_pct=position.unrealized_pnl_pct,
+                status='OPEN',
+            )
+
+            await self.ws_server.broadcast_position(
+                EventType.POSITION_OPENED,
+                ws_position,
+                symbol=position.symbol
+            )
+            logger.debug(f"Position opened broadcasted: {position.symbol}:{position.strategy_name}")
+
+        except Exception as e:
+            logger.error(f"Error broadcasting position_opened: {e}")
+
+    async def _on_position_closed(self, position, realized_pnl: float, realized_pnl_pct: float) -> None:
+        """
+        포지션 청산 시 처리 (PositionManager 콜백)
+
+        포지션 정보를 WebSocket으로 브로드캐스트하고,
+        성과 스냅샷을 계산하여 브로드캐스트합니다.
+        """
+        try:
+            # position_manager의 Position을 websocket_server의 Position으로 변환
+            ws_position = WSPosition(
+                position_id=position.position_id,
+                symbol=position.symbol,
+                strategy=position.strategy_name,  # strategy_name -> strategy
+                entry_time=position.entry_time.isoformat(),
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                current_price=position.current_price,
+                unrealized_pnl=realized_pnl,  # 실현 손익으로 업데이트
+                unrealized_pnl_pct=realized_pnl_pct,
+                status='CLOSED',
+            )
+
+            await self.ws_server.broadcast_position(
+                EventType.POSITION_CLOSED,
+                ws_position,
+                symbol=position.symbol
+            )
+            logger.debug(f"Position closed broadcasted: {position.symbol}:{position.strategy_name}")
+
+            # 성과 스냅샷 계산 및 브로드캐스트
+            await self._broadcast_performance_snapshot()
+
+        except Exception as e:
+            logger.error(f"Error broadcasting position_closed: {e}")
+
+    async def _on_position_updated(self, position) -> None:
+        """
+        포지션 미실현 손익 업데이트 시 처리 (PositionManager 콜백)
+
+        포지션 정보를 WebSocket으로 브로드캐스트합니다.
+        """
+        try:
+            # position_manager의 Position을 websocket_server의 Position으로 변환
+            ws_position = WSPosition(
+                position_id=position.position_id,
+                symbol=position.symbol,
+                strategy=position.strategy_name,  # strategy_name -> strategy
+                entry_time=position.entry_time.isoformat(),
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                current_price=position.current_price,
+                unrealized_pnl=position.unrealized_pnl,
+                unrealized_pnl_pct=position.unrealized_pnl_pct,
+                status='OPEN',
+            )
+
+            await self.ws_server.broadcast_position(
+                EventType.POSITION_UPDATED,
+                ws_position,
+                symbol=position.symbol
+            )
+
+        except Exception as e:
+            logger.error(f"Error broadcasting position_updated: {e}")
+
+    async def _broadcast_performance_snapshot(self) -> None:
+        """
+        성과 스냅샷 계산 및 브로드캐스트
+
+        거래 히스토리를 기반으로 성과 지표를 계산합니다.
+        """
+        try:
+            if not self.position_manager or not self.db:
+                return
+
+            # 모든 거래 조회
+            closed_trades = self.position_manager.get_closed_trades()
+
+            if not closed_trades:
+                # 거래가 없으면 초기값으로 스냅샷 생성
+                metrics = PerformanceMetrics(
+                    timestamp=datetime.utcnow().isoformat(),
+                    total_pnl=0.0,
+                    total_pnl_pct=0.0,
+                    win_rate=0.0,
+                    max_drawdown=0.0,
+                    total_trades=0,
+                    win_count=0,
+                    lose_count=0,
+                )
+            else:
+                # 성과 지표 계산
+                total_pnl = sum(trade.get('realized_pnl', 0) for trade in closed_trades)
+                total_trades = len(closed_trades)
+                win_count = sum(1 for trade in closed_trades if trade.get('realized_pnl', 0) > 0)
+                lose_count = sum(1 for trade in closed_trades if trade.get('realized_pnl', 0) < 0)
+                break_even_count = total_trades - win_count - lose_count
+
+                # 손익률 계산 (초기 자본 가정: 모든 거래의 진입가 합계)
+                total_capital = sum(
+                    trade.get('entry_price', 0) * trade.get('quantity', 0)
+                    for trade in closed_trades
+                )
+                total_pnl_pct = (total_pnl / total_capital * 100) if total_capital > 0 else 0.0
+
+                # 승률 계산
+                win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0.0
+
+                # 최대 낙폭 계산 (간단한 방식)
+                cumulative_pnl = 0
+                max_cumulative = 0
+                max_drawdown = 0.0
+
+                for trade in sorted(closed_trades, key=lambda x: x.get('exit_time', '')):
+                    cumulative_pnl += trade.get('realized_pnl', 0)
+                    if cumulative_pnl > max_cumulative:
+                        max_cumulative = cumulative_pnl
+                    drawdown = max_cumulative - cumulative_pnl
+                    if drawdown > max_drawdown:
+                        max_drawdown = drawdown
+
+                metrics = PerformanceMetrics(
+                    timestamp=datetime.utcnow().isoformat(),
+                    total_pnl=round(total_pnl, 2),
+                    total_pnl_pct=round(total_pnl_pct, 2),
+                    win_rate=round(win_rate, 2),
+                    max_drawdown=round(max_drawdown, 2),
+                    total_trades=total_trades,
+                    win_count=win_count,
+                    lose_count=lose_count,
+                )
+
+            # 성과 스냅샷 브로드캐스트
+            await self.ws_server.broadcast_performance(metrics)
+            logger.debug(f"Performance snapshot broadcasted: PnL={metrics.total_pnl}, WinRate={metrics.win_rate}%")
+
+        except Exception as e:
+            logger.error(f"Error broadcasting performance snapshot: {e}")
 
     def get_simulation_status(self) -> Dict:
         """시뮬레이션 상태 조회"""

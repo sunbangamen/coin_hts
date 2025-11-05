@@ -4,9 +4,17 @@ import { useState, useEffect, useCallback, useRef } from 'react';
  * 실시간 시뮬레이션 WebSocket 연결 관리 훅
  *
  * 신호, 포지션, 성과 지표를 실시간으로 수신하고 상태를 관리합니다.
+ *
+ * @param {string} wsUrl WebSocket 서버 URL (기본값: ws://localhost:8001)
+ * @param {Object} options 옵션
+ *   @param {string} options.token JWT 인증 토큰 (선택사항)
+ *   @param {number} options.authTimeout 인증 타임아웃 (ms, 기본값: 5000)
  */
-export const useSimulation = (wsUrl = 'ws://localhost:8001') => {
+export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
+  const { token = null, authTimeout = 5000 } = options;
+
   const [connected, setConnected] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
   const [signals, setSignals] = useState([]);
   const [positions, setPositions] = useState([]);
   const [performance, setPerformance] = useState(null);
@@ -16,6 +24,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001') => {
   const ws = useRef(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
+  const authTimeoutRef = useRef(null);
 
   /**
    * WebSocket 연결 설정
@@ -30,11 +39,25 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001') => {
         setError(null);
         reconnectAttempts.current = 0;
 
-        // 인증 메시지 전송 (필요시)
-        // ws.current.send(JSON.stringify({
-        //   type: 'auth',
-        //   token: 'your-token-here'
-        // }));
+        // 인증 메시지 전송
+        if (token) {
+          ws.current.send(JSON.stringify({
+            type: 'auth',
+            token: token,
+          }));
+
+          // 인증 타임아웃 설정
+          authTimeoutRef.current = setTimeout(() => {
+            if (!authenticated) {
+              setError('인증 타임아웃: 서버에서 응답이 없습니다');
+              setConnected(false);
+              ws.current?.close();
+            }
+          }, authTimeout);
+        } else {
+          // 토큰 없으면 즉시 authenticated
+          setAuthenticated(true);
+        }
       };
 
       ws.current.onmessage = (event) => {

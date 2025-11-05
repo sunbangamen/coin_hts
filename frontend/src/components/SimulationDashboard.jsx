@@ -12,6 +12,7 @@ import '../styles/SimulationDashboard.css';
  */
 export const SimulationDashboard = ({
   wsUrl = 'ws://localhost:8001',
+  apiUrl = 'http://localhost:8000/api',
   symbols = ['KRW-BTC', 'KRW-ETH'],
 }) => {
   const {
@@ -28,6 +29,42 @@ export const SimulationDashboard = ({
 
   const [selectedSymbols, setSelectedSymbols] = useState(symbols);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
+  const [restPollingInterval, setRestPollingInterval] = useState(null);
+
+  // 초기 데이터 로딩 (REST API)
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        // 시뮬레이션 상태 조회
+        const statusRes = await fetch(`${apiUrl}/simulation/status`);
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          console.log('Initial simulation status:', statusData);
+        }
+
+        // 현재 포지션 조회
+        const positionsRes = await fetch(`${apiUrl}/simulation/positions`);
+        if (positionsRes.ok) {
+          const positionsData = await positionsRes.json();
+          console.log('Initial positions:', positionsData);
+        }
+
+        // 거래 이력 조회
+        const historyRes = await fetch(`${apiUrl}/simulation/history?limit=50`);
+        if (historyRes.ok) {
+          const historyData = await historyRes.json();
+          console.log('Initial trade history:', historyData);
+        }
+
+        setInitialDataLoaded(true);
+      } catch (err) {
+        console.error('Failed to load initial data:', err);
+      }
+    };
+
+    loadInitialData();
+  }, [apiUrl]);
 
   // 심볼 구독
   useEffect(() => {
@@ -35,6 +72,46 @@ export const SimulationDashboard = ({
       subscribe(selectedSymbols);
     }
   }, [connected, selectedSymbols, subscribe]);
+
+  // 자동 새로고침 (REST 폴링)
+  useEffect(() => {
+    if (!autoRefresh || !initialDataLoaded) {
+      if (restPollingInterval) {
+        clearInterval(restPollingInterval);
+        setRestPollingInterval(null);
+      }
+      return;
+    }
+
+    // 30초마다 데이터 갱신
+    const pollInterval = setInterval(async () => {
+      try {
+        // 포지션 갱신
+        const positionsRes = await fetch(`${apiUrl}/simulation/positions`);
+        if (positionsRes.ok) {
+          const positionsData = await positionsRes.json();
+          console.log('Polled positions:', positionsData);
+        }
+
+        // 성과 데이터 갱신
+        const historyRes = await fetch(`${apiUrl}/simulation/history?limit=50`);
+        if (historyRes.ok) {
+          const historyData = await historyRes.json();
+          console.log('Polled history:', historyData);
+        }
+      } catch (err) {
+        console.error('Failed to poll data:', err);
+      }
+    }, 30000);
+
+    setRestPollingInterval(pollInterval);
+
+    return () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    };
+  }, [autoRefresh, initialDataLoaded, apiUrl]);
 
   const handleSymbolToggle = (symbol) => {
     setSelectedSymbols((prev) => {
