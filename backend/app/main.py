@@ -889,15 +889,17 @@ async def start_simulation(request: SimulationStartRequest):
             f"strategy_count={sum(len(v) for v in strategies_dict.values())}"
         )
 
-        # 시뮬레이션을 백그라운드 작업으로 시작 (이벤트 루프 블로킹 방지)
+        # 시뮬레이션을 스레드 풀에서 실행하여 이벤트 루프 블로킹 방지
         import asyncio
-        asyncio.create_task(orchestrator.start_simulation(
-            symbols=request.symbols,
-            strategies=strategies_dict,
-            redis_client=redis_conn,
+        asyncio.create_task(asyncio.to_thread(
+            lambda: asyncio.run(orchestrator.start_simulation(
+                symbols=request.symbols,
+                strategies=strategies_dict,
+                redis_client=redis_conn,
+            ))
         ))
 
-        logger.info(f"Simulation startup scheduled")
+        logger.info(f"Simulation startup scheduled in background thread")
 
         # 즉시 상태 반환 (세션 ID는 임시)
         return SimulationStatusResponse(
@@ -1166,7 +1168,12 @@ async def get_positions(symbol: Optional[str] = None):
                 total_unrealized_pnl=0.0,
             )
 
-        positions = position_manager.get_open_positions(symbol=symbol)
+        # Run DB call in thread pool to avoid blocking event loop
+        import asyncio
+        positions = await asyncio.to_thread(
+            position_manager.get_open_positions,
+            symbol
+        )
 
         # 총 미실현 손익 계산
         total_unrealized_pnl = sum(
@@ -1240,10 +1247,13 @@ async def get_trade_history(
                 lose_count=0,
             )
 
-        trades = position_manager.get_closed_trades(
-            symbol=symbol,
-            strategy_name=strategy_name,
-            limit=limit,
+        # Run DB call in thread pool to avoid blocking event loop
+        import asyncio
+        trades = await asyncio.to_thread(
+            position_manager.get_closed_trades,
+            symbol,
+            strategy_name,
+            limit,
         )
 
         # 통계 계산
