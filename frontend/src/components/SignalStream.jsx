@@ -5,8 +5,9 @@ import '../styles/SignalStream.css';
  * 실시간 신호 스트림 컴포넌트
  *
  * BUY/SELL 신호를 시간순으로 표시합니다.
+ * 신호는 WebSocket 실시간 연결을 통해서만 수신됩니다.
  */
-export const SignalStream = ({ signals = [] }) => {
+export const SignalStream = ({ signals = [], hasRealtimeData = false }) => {
   const formatTime = (timestamp) => {
     if (!timestamp) return '';
     const date = new Date(timestamp);
@@ -34,7 +35,11 @@ export const SignalStream = ({ signals = [] }) => {
 
       <div className="signal-stream-content">
         {signals.length === 0 ? (
-          <div className="signal-empty">신호 대기 중...</div>
+          <div className="signal-empty">
+            {hasRealtimeData
+              ? '신호 대기 중...'
+              : '⚠️ 신호는 WebSocket 실시간 연결 시에만 수신됩니다'}
+          </div>
         ) : (
           <div className="signal-list">
             {signals.map((signal, idx) => (

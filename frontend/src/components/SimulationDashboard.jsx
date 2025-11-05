@@ -35,6 +35,9 @@ export const SimulationDashboard = ({
     }
   });
 
+  // 토큰 입력 필드 상태 (배너가 유지되도록 별도 관리)
+  const [tokenInput, setTokenInput] = useState('');
+
   const {
     connected,
     authenticated,
@@ -67,7 +70,7 @@ export const SimulationDashboard = ({
   const mergedPerformance = hasRealtimeData && performance ? performance : restPerformance;
 
   // 통합 시뮬레이션 상태 (WebSocket 유효하면 사용, 아니면 REST 사용)
-  const mergedSimulationStatus = simulationStatus || restStatus;
+  const mergedSimulationStatus = hasRealtimeData && simulationStatus ? simulationStatus : restStatus;
 
   // 초기 데이터 로딩 (REST API)
   useEffect(() => {
@@ -262,31 +265,48 @@ export const SimulationDashboard = ({
         </div>
 
         {/* 토큰 입력 필드 */}
-        {!token && (
+        {!token || !authenticated ? (
           <div className="token-input-banner">
             <span className="info-icon">ℹ️</span>
-            <span className="info-text">JWT 토큰이 필요합니다.</span>
-            <input
-              type="password"
-              placeholder="JWT 토큰 입력..."
-              value=""
-              onChange={(e) => {
-                const newToken = e.target.value;
-                setToken(newToken);
-                if (newToken) {
-                  localStorage.setItem('simulation_token', newToken);
-                }
-              }}
-              className="token-input"
-            />
-            <button
-              onClick={() => window.location.reload()}
-              className="btn btn-sm btn-primary"
-            >
-              연결 재시도
-            </button>
+            <span className="info-text">
+              {!token ? 'JWT 토큰이 필요합니다.' : '인증 대기 중...'}
+            </span>
+            {!token && (
+              <>
+                <input
+                  type="password"
+                  placeholder="JWT 토큰 입력..."
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      // Enter 키로도 저장 가능
+                      if (tokenInput) {
+                        setToken(tokenInput);
+                        localStorage.setItem('simulation_token', tokenInput);
+                        setTokenInput('');
+                      }
+                    }
+                  }}
+                  className="token-input"
+                />
+                <button
+                  onClick={() => {
+                    if (tokenInput) {
+                      setToken(tokenInput);
+                      localStorage.setItem('simulation_token', tokenInput);
+                      setTokenInput('');
+                    }
+                  }}
+                  disabled={!tokenInput}
+                  className="btn btn-sm btn-success"
+                >
+                  저장 & 연결
+                </button>
+              </>
+            )}
           </div>
-        )}
+        ) : null}
 
         {error && (
           <div className="error-banner">
@@ -372,7 +392,7 @@ export const SimulationDashboard = ({
         </div>
 
         <div className="dashboard-panel signals-panel">
-          <SignalStream signals={signals} />
+          <SignalStream signals={signals} hasRealtimeData={hasRealtimeData} />
         </div>
 
         <div className="dashboard-panel positions-panel">

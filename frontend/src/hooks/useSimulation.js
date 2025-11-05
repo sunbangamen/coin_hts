@@ -97,7 +97,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
         setSignals([]);
         setPositions([]);
         setPerformance(null);
-        // simulationStatus는 REST에서 갱신되도록 유지
+        setSimulationStatus(null); // REST에서 갱신되도록 null로 초기화
 
         // 타임아웃 정리
         if (authTimeoutRef.current) {
