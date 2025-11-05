@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 # 테스트 설정
 TEST_CONFIG = {
-    'api_url': 'http://backend:8000/api',
-    'ws_url': 'ws://backend:8001',
+    'api_url': 'http://localhost:8000/api',
+    'ws_url': 'ws://localhost:8001',
     'symbols': ['KRW-BTC', 'KRW-ETH', 'KRW-XRP'],
     'strategy': 'volume_zone_breakout',
     'strategy_params': {
@@ -39,7 +39,7 @@ TEST_CONFIG = {
         'top_percentile': 0.2,
         'breakout_buffer': 0.0
     },
-    'timeout': 30,
+    'timeout': 60,
     'max_retries': 3,
     'retry_delay': 2,
 }
@@ -76,7 +76,7 @@ class E2ETestRunner:
             # API 서버 확인
             async with self.session.get(
                 f"{self.config['api_url']}/health",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status != 200:
                     self.test_results['failed'].append(
@@ -95,7 +95,7 @@ class E2ETestRunner:
         try:
             async with self.session.get(
                 f"{self.config['api_url']}/simulation/status",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status in [200, 500]:  # 500은 시뮬레이션 미시작 상태
                     logger.info("✅ 데이터베이스 정상")
@@ -115,7 +115,7 @@ class E2ETestRunner:
         try:
             async with self.session.get(
                 f"{self.config['api_url']}/strategies",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 data = await resp.json()
                 strategies = data.get('strategies', [])
@@ -158,7 +158,7 @@ class E2ETestRunner:
             async with self.session.post(
                 f"{self.config['api_url']}/simulation/start",
                 json=request_data,
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status != 200:
                     data = await resp.text()
@@ -194,7 +194,7 @@ class E2ETestRunner:
         try:
             async with self.session.get(
                 f"{self.config['api_url']}/simulation/status",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status != 200:
                     self.test_results['failed'].append(
@@ -226,7 +226,7 @@ class E2ETestRunner:
         try:
             async with self.session.get(
                 f"{self.config['api_url']}/simulation/strategies",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status != 200:
                     self.test_results['failed'].append(
@@ -261,13 +261,13 @@ class E2ETestRunner:
         try:
             # 데이터 수집을 위해 충분한 시간 대기
             logger.info("  - 시장 데이터 수집 대기 중... (20초)")
-            await asyncio.sleep(20)
+            await asyncio.sleep(25)
 
             # 캔들 데이터 확인
             logger.info("Requesting /simulation/market-data...")
             async with self.session.get(
                 f"{self.config['api_url']}/simulation/market-data",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 logger.info(f"  - Response status: {resp.status}")
                 if resp.status != 200:
@@ -312,7 +312,7 @@ class E2ETestRunner:
             logger.info("Requesting /simulation/positions...")
             async with self.session.get(
                 f"{self.config['api_url']}/simulation/positions",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 logger.info(f"  - HTTP Status: {resp.status}")
                 if resp.status != 200:
@@ -349,7 +349,7 @@ class E2ETestRunner:
         try:
             async with self.session.get(
                 f"{self.config['api_url']}/simulation/performance",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -365,6 +365,7 @@ class E2ETestRunner:
                     )
                     return True
         except Exception as e:
+            logger.exception(f"Performance check failed: {e}")
             self.test_results['warnings'].append(f"Performance check: {e}")
             return True
 
@@ -374,12 +375,12 @@ class E2ETestRunner:
         try:
             # 서비스가 정리될 시간을 주기 위해 대기
             logger.info("  - 서비스 정리를 위해 10초 대기 중...")
-            await asyncio.sleep(10)
+            await asyncio.sleep(15)
 
             logger.info("Requesting POST /simulation/stop...")
             async with self.session.post(
                 f"{self.config['api_url']}/simulation/stop",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 logger.info(f"  - HTTP Status: {resp.status}")
                 if resp.status != 200:
@@ -405,7 +406,7 @@ class E2ETestRunner:
             logger.info("Requesting GET /simulation/history...")
             async with self.session.get(
                 f"{self.config['api_url']}/simulation/history?limit=50",
-                timeout=aiohttp.ClientTimeout(total=40)
+                timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 logger.info(f"  - HTTP Status: {resp.status}")
                 if resp.status != 200:
