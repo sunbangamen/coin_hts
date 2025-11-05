@@ -161,15 +161,13 @@ print_info "- 시뮬레이션 시작/실행/중지"
 print_info "- 포지션 추적"
 print_info "- 성과 지표 계산"
 
-# e2e-test 컨테이너에서 E2E 테스트 실행 (backend이 아닌 별도 컨테이너)
-$DOCKER_COMPOSE up -d e2e-test
-# E2E 테스트 컨테이너가 완료될 때까지 대기
-sleep 5
-E2E_RESULT=$(docker wait coin-e2e-test 2>/dev/null || echo "1")
+# backend 컨테이너 내에서 E2E 테스트 실행
+# API URL: http://127.0.0.1:8000 (같은 컨테이너 내 localhost)
+$DOCKER_COMPOSE exec -T backend python scripts/e2e_test_scenarios.py
+E2E_RESULT=$?
 
-if [ "$E2E_RESULT" != "0" ]; then
+if [ $E2E_RESULT -ne 0 ]; then
     print_error "E2E 통합 테스트 실패"
-    $DOCKER_COMPOSE logs e2e-test | tail -50
     $DOCKER_COMPOSE down
     exit 1
 fi

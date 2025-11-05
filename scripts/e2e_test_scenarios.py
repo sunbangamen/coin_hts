@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 # 테스트 설정
 TEST_CONFIG = {
-    'api_url': 'http://backend:8000/api',
-    'ws_url': 'ws://backend:8001',
+    'api_url': 'http://127.0.0.1:8000/api',
+    'ws_url': 'ws://127.0.0.1:8001',
     'symbols': ['KRW-BTC', 'KRW-ETH', 'KRW-XRP'],
     'strategy': 'volume_zone_breakout',
     'strategy_params': {
