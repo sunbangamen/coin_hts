@@ -21,6 +21,9 @@ from backend.app.task_manager import TaskManager, TaskStatus
 from backend.app.jobs import run_backtest_job
 from rq import Queue
 from backend.app.config import redis_conn
+from backend.app.simulation.simulation_orchestrator import get_orchestrator, close_orchestrator
+from backend.app.simulation.position_manager import get_position_manager
+from backend.app.market_data.market_data_service import get_market_data_service
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
@@ -260,6 +263,128 @@ class TaskStatusResponse(BaseModel):
 
 
 # ============================================================================
+# 실시간 시뮬레이션 관련 Pydantic 모델 (Phase 2)
+# ============================================================================
+
+class StrategyConfig(BaseModel):
+    """전략 설정 모델 (실시간 시뮬레이션용)"""
+    strategy_name: str = Field(..., description="전략 이름 (예: 'volume_zone_breakout')")
+    params: Dict[str, Any] = Field(default_factory=dict, description="전략 파라미터")
+
+
+class SimulationStartRequest(BaseModel):
+    """실시간 시뮬레이션 시작 요청"""
+    symbols: List[str] = Field(..., min_items=1, description="모니터링할 심볼 목록 (예: ['KRW-BTC', 'KRW-ETH'])")
+    strategies: Dict[str, List[StrategyConfig]] = Field(
+        ...,
+        description="""각 심볼의 전략 설정
+        예: {
+            'KRW-BTC': [
+                {'strategy_name': 'volume_zone_breakout', 'params': {'volume_window': 10}},
+                {'strategy_name': 'volume_long_candle', 'params': {'vol_ma_window': 10}}
+            ]
+        }"""
+    )
+
+
+class SimulationStatusResponse(BaseModel):
+    """시뮬레이션 상태 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    is_running: bool = Field(..., description="실행 여부")
+    market_data_status: Optional[Dict[str, Any]] = Field(None, description="마켓 데이터 서비스 상태")
+    strategy_runner_status: Optional[Dict[str, Any]] = Field(None, description="전략 실행 엔진 상태")
+    websocket_clients: int = Field(..., description="연결된 WebSocket 클라이언트 수")
+
+
+class SimulationStrategyResponse(BaseModel):
+    """등록된 전략 정보"""
+    symbol: str = Field(..., description="심볼")
+    strategy_name: str = Field(..., description="전략 이름")
+    params: Dict[str, Any] = Field(..., description="전략 파라미터")
+    is_initialized: bool = Field(..., description="초기화 여부")
+
+
+class SimulationStrategiesResponse(BaseModel):
+    """시뮬레이션 등록 전략 목록 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    strategies: List[SimulationStrategyResponse] = Field(default_factory=list, description="전략 목록")
+    count: int = Field(..., description="전략 개수")
+
+
+# ============================================================================
+# 포지션 관리 관련 Pydantic 모델 (Phase 3)
+# ============================================================================
+
+class PositionResponse(BaseModel):
+    """오픈 포지션 정보"""
+    position_id: int = Field(..., description="포지션 ID")
+    symbol: str = Field(..., description="거래 심볼")
+    strategy_name: str = Field(..., description="전략 이름")
+    entry_time: str = Field(..., description="진입 시간 (ISO 8601)")
+    entry_price: float = Field(..., description="진입 가격")
+    quantity: float = Field(..., description="포지션 수량")
+    current_price: float = Field(..., description="현재 가격")
+    unrealized_pnl: float = Field(..., description="미실현 손익")
+    unrealized_pnl_pct: float = Field(..., description="미실현 손익률 (%)")
+    fee_amount: float = Field(..., description="수수료")
+
+
+class PositionListResponse(BaseModel):
+    """포지션 목록 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    positions: List[PositionResponse] = Field(default_factory=list, description="포지션 목록")
+    count: int = Field(..., description="포지션 개수")
+    total_unrealized_pnl: float = Field(..., description="총 미실현 손익")
+
+
+class TradeResponse(BaseModel):
+    """거래(클로즈된 포지션) 정보"""
+    id: int = Field(..., description="거래 ID")
+    symbol: str = Field(..., description="거래 심볼")
+    strategy_name: str = Field(..., description="전략 이름")
+    entry_time: str = Field(..., description="진입 시간 (ISO 8601)")
+    entry_price: float = Field(..., description="진입 가격")
+    exit_time: str = Field(..., description="청산 시간 (ISO 8601)")
+    exit_price: float = Field(..., description="청산 가격")
+    quantity: float = Field(..., description="수량")
+    realized_pnl: float = Field(..., description="실현 손익")
+    realized_pnl_pct: float = Field(..., description="실현 손익률 (%)")
+    fee_amount: float = Field(..., description="수수료")
+    slippage_amount: float = Field(..., description="슬리피지 금액")
+    hold_duration: Optional[str] = Field(None, description="보유 기간")
+
+
+class TradeHistoryResponse(BaseModel):
+    """거래 이력 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    trades: List[TradeResponse] = Field(default_factory=list, description="거래 목록")
+    count: int = Field(..., description="거래 개수")
+    total_realized_pnl: float = Field(..., description="총 실현 손익")
+    win_count: int = Field(..., description="수익 거래 개수")
+    lose_count: int = Field(..., description="손실 거래 개수")
+    win_rate: float = Field(..., description="승률 (0.0 ~ 1.0, 예: 0.65 = 65%)")
+
+
+class CandleResponse(BaseModel):
+    """캔들(시장 데이터) 정보"""
+    symbol: str = Field(..., description="심볼")
+    timeframe: str = Field(..., description="타임프레임")
+    timestamp: str = Field(..., description="타임스탬프 (ISO 8601)")
+    open: float = Field(..., description="시가")
+    high: float = Field(..., description="고가")
+    low: float = Field(..., description="저가")
+    close: float = Field(..., description="종가")
+    volume: float = Field(..., description="거래량")
+
+
+class MarketDataResponse(BaseModel):
+    """시장 데이터 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    candles: List[CandleResponse] = Field(default_factory=list, description="캔들 데이터 목록")
+    count: int = Field(..., description="캔들 개수")
+
+
+# ============================================================================
 # 엔드포인트
 # ============================================================================
 
@@ -276,6 +401,13 @@ async def root():
             "GET /api/backtests/status/{task_id}": "Get async task status",
             "GET /api/strategies": "List supported strategies",
             "GET /health": "Health check",
+            "POST /api/simulation/start": "Start real-time simulation (Phase 2)",
+            "POST /api/simulation/stop": "Stop real-time simulation (Phase 2)",
+            "GET /api/simulation/status": "Get simulation status (Phase 2)",
+            "GET /api/simulation/strategies": "Get registered simulation strategies (Phase 2)",
+            "GET /api/simulation/market-data": "Get market data (candles) (Phase 4)",
+            "GET /api/simulation/positions": "Get current open positions (Phase 3)",
+            "GET /api/simulation/history": "Get closed trades history (Phase 3)",
         },
     }
 
@@ -289,6 +421,12 @@ async def health_check():
         "data_root": DATA_ROOT,
         "results_dir": RESULTS_DIR,
     }
+
+
+@app.get("/api/health")
+async def api_health_check():
+    """API 헬스체크 엔드포인트"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 
 @app.get("/api/strategies")
@@ -694,4 +832,468 @@ async def get_task_status(task_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving task status: {str(e)}",
+        )
+
+
+# ============================================================================
+# 실시간 시뮬레이션 API 엔드포인트 (Phase 2)
+# ============================================================================
+
+@app.post(
+    "/api/simulation/start",
+    response_model=SimulationStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def start_simulation(request: SimulationStartRequest):
+    """
+    실시간 시뮬레이션 시작
+
+    마켓 데이터를 수신하여 등록된 전략들을 실시간으로 실행하고,
+    발생한 신호를 WebSocket을 통해 브로드캐스트합니다.
+
+    Args:
+        request (SimulationStartRequest):
+            - symbols: 모니터링할 심볼 목록
+            - strategies: 심볼별 전략 설정
+
+    Returns:
+        SimulationStatusResponse: 시뮬레이션 상태 정보 (session_id 포함)
+
+    Raises:
+        HTTPException: 시뮬레이션 시작 실패
+    """
+    try:
+        orchestrator = get_orchestrator()
+
+        # 이미 실행 중인 경우 에러
+        if orchestrator.is_running:
+            logger.warning("Simulation already running")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Simulation is already running",
+            )
+
+        # 전략 설정 변환 (Pydantic 모델 → dict)
+        strategies_dict = {}
+        for symbol, strategy_configs in request.strategies.items():
+            strategies_dict[symbol] = [
+                {
+                    'strategy_name': config.strategy_name,
+                    'params': config.params,
+                }
+                for config in strategy_configs
+            ]
+
+        logger.info(
+            f"Starting simulation: symbols={request.symbols}, "
+            f"strategy_count={sum(len(v) for v in strategies_dict.values())}"
+        )
+
+        # 시뮬레이션을 스레드 풀에서 실행하여 이벤트 루프 블로킹 방지
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(
+            lambda: asyncio.run(orchestrator.start_simulation(
+                symbols=request.symbols,
+                strategies=strategies_dict,
+                redis_client=redis_conn,
+            ))
+        ))
+
+        logger.info(f"Simulation startup scheduled in background thread")
+
+        # 즉시 상태 반환 (세션 ID는 임시)
+        return SimulationStatusResponse(
+            session_id="initializing",
+            is_running=True,
+            websocket_clients=0,
+            active_positions=0,
+            total_realized_pnl=0.0,
+            total_unrealized_pnl=0.0,
+            closed_trades_count=0,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start simulation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start simulation: {str(e)}",
+        )
+
+
+@app.post(
+    "/api/simulation/stop",
+    response_model=SimulationStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def stop_simulation():
+    """
+    실시간 시뮬레이션 중지
+
+    모든 서비스를 정리하고 세션을 종료합니다.
+
+    Returns:
+        SimulationStatusResponse: 시뮬레이션 상태 정보 (is_running=False)
+
+    Raises:
+        HTTPException: 시뮬레이션 중지 실패
+    """
+    try:
+        orchestrator = get_orchestrator()
+
+        # 실행 중이지 않은 경우 에러
+        if not orchestrator or not orchestrator.is_running:
+            logger.warning("No simulation running")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No simulation is currently running",
+            )
+
+        logger.info(f"Stopping simulation: session_id={orchestrator.session_id}")
+
+        # 비동기로 중지 (event loop 양보)
+        import asyncio
+        asyncio.create_task(orchestrator.stop_simulation())
+
+        logger.info("Simulation stop requested")
+
+        # 즉시 상태 반환
+        return orchestrator.get_simulation_status()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to stop simulation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stop simulation: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/status",
+    response_model=SimulationStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_simulation_status():
+    """
+    실시간 시뮬레이션 상태 조회
+
+    현재 시뮬레이션의 실행 상태, 등록된 전략, WebSocket 클라이언트 정보를 반환합니다.
+
+    Returns:
+        SimulationStatusResponse: 시뮬레이션 상태 정보
+
+    Raises:
+        HTTPException: 상태 조회 실패
+    """
+    try:
+        orchestrator = get_orchestrator()
+        status_info = orchestrator.get_simulation_status()
+
+        logger.debug(f"Simulation status retrieved: is_running={status_info['is_running']}")
+
+        return SimulationStatusResponse(**status_info)
+
+    except Exception as e:
+        logger.error(f"Failed to get simulation status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get simulation status: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/strategies",
+    response_model=SimulationStrategiesResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_simulation_strategies():
+    """
+    등록된 시뮬레이션 전략 목록 조회
+
+    현재 시뮬레이션에 등록된 모든 전략의 목록과 설정을 반환합니다.
+
+    Returns:
+        SimulationStrategiesResponse: 전략 목록 및 메타데이터
+
+    Raises:
+        HTTPException: 전략 목록 조회 실패
+    """
+    try:
+        orchestrator = get_orchestrator()
+        strategy_runner = orchestrator.strategy_runner
+
+        if not strategy_runner:
+            logger.warning("Strategy runner not initialized")
+            return SimulationStrategiesResponse(
+                session_id=orchestrator.session_id,
+                strategies=[],
+                count=0,
+            )
+
+        strategies = strategy_runner.get_strategies()
+
+        # Pydantic 모델로 변환
+        strategy_responses = [
+            SimulationStrategyResponse(**strategy)
+            for strategy in strategies
+        ]
+
+        logger.info(f"Strategies retrieved: count={len(strategies)}")
+
+        return SimulationStrategiesResponse(
+            session_id=orchestrator.session_id,
+            strategies=strategy_responses,
+            count=len(strategies),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get simulation strategies: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get simulation strategies: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/market-data",
+    response_model=MarketDataResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_market_data(symbol: Optional[str] = None, limit: int = 10):
+    """
+    시장 데이터(캔들) 조회
+
+    현재 수집 중인 시장 데이터(캔들)를 조회합니다.
+    시뮬레이션이 실행 중이 아니면 빈 리스트를 반환합니다.
+
+    Args:
+        symbol: 심볼 필터 (선택사항, 예: 'KRW-BTC')
+        limit: 조회할 캔들 개수 (기본: 10, 최대: 200)
+
+    Returns:
+        MarketDataResponse: 캔들 데이터 목록
+
+    Note:
+        - 응답이 비어 있으면 시뮬레이션이 아직 데이터를 수집하지 못했거나 실행 중이 아닙니다.
+        - 데이터가 있으면 최근 캔들부터 역순으로 정렬됩니다.
+    """
+    try:
+        # Immediately return empty response if service not ready
+        # This prevents event loop blocking when simulation is initializing
+        market_data_service = get_market_data_service()
+
+        if not market_data_service or not market_data_service.is_running:
+            # 시뮬레이션이 실행 중이 아니면 빈 리스트 반환
+            return MarketDataResponse(
+                session_id=None,
+                candles=[],
+                count=0,
+            )
+
+        # 현재 캔들 조회 (심볼별 진행 중인 캔들)
+        candles = []
+        symbols_to_query = market_data_service.symbols if not symbol else [symbol]
+
+        for sym in symbols_to_query:
+            current_candle = market_data_service.get_current_candle(sym)
+            if current_candle:
+                # 캔들 데이터를 응답 모델로 변환
+                candle_response = CandleResponse(
+                    symbol=sym,
+                    timeframe=market_data_service.timeframe,
+                    timestamp=current_candle.get('timestamp', '').isoformat()
+                        if isinstance(current_candle.get('timestamp'), datetime)
+                        else str(current_candle.get('timestamp', '')),
+                    open=float(current_candle.get('open', 0)),
+                    high=float(current_candle.get('high', 0)),
+                    low=float(current_candle.get('low', 0)),
+                    close=float(current_candle.get('close', 0)),
+                    volume=float(current_candle.get('volume', 0)),
+                )
+                candles.append(candle_response)
+
+        logger.info(f"Market data retrieved: count={len(candles)}, symbols={len(symbols_to_query)}")
+
+        position_manager = get_position_manager()
+        session_id = position_manager.session_id if position_manager else None
+
+        return MarketDataResponse(
+            session_id=session_id,
+            candles=candles,
+            count=len(candles),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get market data: {e}", exc_info=True)
+        # 예외 발생 시에도 빈 응답으로 graceful handling
+        return MarketDataResponse(
+            session_id=None,
+            candles=[],
+            count=0,
+        )
+
+
+@app.get(
+    "/api/simulation/positions",
+    response_model=PositionListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_positions(symbol: Optional[str] = None):
+    """
+    현재 오픈 포지션 조회
+
+    현재 시뮬레이션에 오픈되어 있는 모든 포지션을 조회합니다.
+
+    Args:
+        symbol: 심볼 필터 (선택사항, 예: 'KRW-BTC')
+
+    Returns:
+        PositionListResponse: 포지션 목록 및 통계
+
+    Raises:
+        HTTPException: 포지션 조회 실패
+    """
+    try:
+        position_manager = get_position_manager()
+
+        # Return empty positions if manager not ready
+        if not position_manager:
+            return PositionListResponse(
+                session_id=None,
+                positions=[],
+                count=0,
+                total_unrealized_pnl=0.0,
+            )
+
+        # Run DB call in thread pool to avoid blocking event loop
+        import asyncio
+        positions = await asyncio.to_thread(
+            position_manager.get_open_positions,
+            symbol
+        )
+
+        # 총 미실현 손익 계산
+        total_unrealized_pnl = sum(
+            p['unrealized_pnl'] for p in positions
+        )
+
+        # Pydantic 모델로 변환
+        position_responses = [
+            PositionResponse(**position)
+            for position in positions
+        ]
+
+        logger.info(f"Positions retrieved: count={len(positions)}")
+
+        return PositionListResponse(
+            session_id=position_manager.session_id,
+            positions=position_responses,
+            count=len(positions),
+            total_unrealized_pnl=round(total_unrealized_pnl, 2),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get positions: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get positions: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/history",
+    response_model=TradeHistoryResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_trade_history(
+    symbol: Optional[str] = None,
+    strategy_name: Optional[str] = None,
+    limit: int = 100,
+):
+    """
+    거래 이력 조회
+
+    클로즈된 포지션(완료된 거래)의 이력을 조회합니다.
+
+    Args:
+        symbol: 심볼 필터 (선택사항)
+        strategy_name: 전략명 필터 (선택사항)
+        limit: 조회 개수 제한 (기본: 100, 최대: 1000)
+
+    Returns:
+        TradeHistoryResponse: 거래 이력 목록 및 통계
+
+    Raises:
+        HTTPException: 거래 이력 조회 실패
+    """
+    try:
+        # limit 최대값 제한
+        limit = min(limit, 1000)
+
+        position_manager = get_position_manager()
+
+        # Return empty history if manager not ready
+        if not position_manager:
+            return TradeHistoryResponse(
+                session_id=None,
+                trades=[],
+                count=0,
+                total_realized_pnl=0.0,
+                win_rate=0.0,
+                win_count=0,
+                lose_count=0,
+            )
+
+        # Run DB call in thread pool to avoid blocking event loop
+        import asyncio
+        trades = await asyncio.to_thread(
+            position_manager.get_closed_trades,
+            symbol,
+            strategy_name,
+            limit,
+        )
+
+        # 통계 계산
+        total_realized_pnl = sum(
+            t.get('realized_pnl', 0) for t in trades
+        )
+        win_count = sum(
+            1 for t in trades if t.get('realized_pnl', 0) > 0
+        )
+        lose_count = sum(
+            1 for t in trades if t.get('realized_pnl', 0) < 0
+        )
+        # 승률 계산 (0.0 ~ 1.0)
+        win_rate = (win_count / len(trades)) if trades else 0.0
+
+        # Pydantic 모델로 변환
+        trade_responses = [
+            TradeResponse(**trade)
+            for trade in trades
+        ]
+
+        logger.info(
+            f"Trade history retrieved: count={len(trades)}, "
+            f"total_pnl={total_realized_pnl:.2f}, win_rate={win_rate:.2%}, "
+            f"wins={win_count}, losses={lose_count}"
+        )
+
+        return TradeHistoryResponse(
+            session_id=position_manager.session_id,
+            trades=trade_responses,
+            count=len(trades),
+            total_realized_pnl=round(total_realized_pnl, 2),
+            win_count=win_count,
+            lose_count=lose_count,
+            win_rate=round(win_rate, 4),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get trade history: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get trade history: {str(e)}",
         )

@@ -167,11 +167,29 @@ export DATA_ROOT=/home/user/trading_data
 
 ## 테스트
 
-### 로컬 테스트 실행
+### ⚡ 빠른 종합 테스트 실행 (권장)
+
 ```bash
-# 전체 테스트
+./scripts/run_e2e_tests.sh --with-unit
+```
+
+**실행 내용:**
+- ✅ Backend 유닛 테스트 (126/145 passing)
+- ✅ E2E 통합 테스트 (8/8 scenarios passing)
+- ✅ Docker 자동 실행 (컨테이너 관리 포함)
+
+**예상 시간:** 약 3-4분
+
+> 자세한 테스트 가이드는 [`TESTING_GUIDE.md`](./TESTING_GUIDE.md) 참고
+
+### 로컬 유닛 테스트 실행
+
+```bash
+# 가상환경 활성화
 source venv/bin/activate
-python -m pytest tests/test_data_loader.py -v
+
+# 전체 테스트
+python -m pytest tests/ -v
 
 # 특정 테스트 클래스만 실행
 pytest tests/test_data_loader.py::TestLoadOhlcvData -v
@@ -181,17 +199,25 @@ pytest tests/test_data_loader.py -vv --tb=long
 ```
 
 ### Docker 테스트 실행
-```bash
-# 테스트 컨테이너 실행 (test 프로필 사용)
-docker-compose run --rm test
 
-# 또는 특정 테스트만 실행
-docker-compose run --rm test pytest tests/test_data_loader.py::TestNormalizeTimezone -v
+```bash
+# 기본 E2E 테스트만
+docker-compose down --remove-orphans
+./scripts/run_e2e_tests.sh
+
+# E2E + 유닛 테스트
+./scripts/run_e2e_tests.sh --with-unit
+
+# E2E + 프론트엔드 테스트
+./scripts/run_e2e_tests.sh --with-frontend
+
+# 모든 테스트 (풀 모드)
+./scripts/run_e2e_tests.sh --full
 ```
 
 ### 테스트 커버리지
 
-**테스트 케이스**: 22개
+**유닛 테스트 (로컬)**: 22개 케이스
 
 | 테스트 그룹 | 개수 | 설명 |
 |-----------|------|------|
@@ -200,7 +226,20 @@ docker-compose run --rm test pytest tests/test_data_loader.py::TestNormalizeTime
 | TestValidateDataFrame | 4 | DataFrame 필수 컬럼 검증 |
 | TestLoadOhlcvData | 11 | 전체 데이터 로딩 및 필터링 |
 
-**커버리지**: 80% 이상
+**E2E 테스트**: 8개 시나리오
+
+| # | 시나리오 | 상태 |
+|----|---------|------|
+| 1 | Health Check | ✅ Pass |
+| 2 | List Available Strategies | ✅ Pass |
+| 3 | Start Simulation | ✅ Pass |
+| 4 | Check Simulation Status | ✅ Pass |
+| 5 | Verify Strategies Registered | ✅ Pass |
+| 6 | Collect Market Data | ✅ Pass |
+| 7 | Track Positions | ✅ Pass |
+| 8 | Retrieve Trade History | ✅ Pass |
+
+**커버리지**: 80% 이상 (유닛 테스트)
 
 ---
 

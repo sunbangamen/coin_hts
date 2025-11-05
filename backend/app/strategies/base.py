@@ -85,16 +85,15 @@ class BacktestResult:
 
 class Strategy(ABC):
     """
-    백테스트 전략의 추상 베이스 클래스
+    백테스트 및 실시간 시뮬레이션 전략의 추상 베이스 클래스
 
-    모든 전략은 이 클래스를 상속받아 run() 메서드를 구현해야 합니다.
+    모든 전략은 이 클래스를 상속받아 run() 메서드를 구현해야 하며,
+    실시간 모드를 지원하려면 initialize_with_history()를 구현해야 합니다.
 
-    Example:
+    Example (Backtest):
         >>> class MyStrategy(Strategy):
         ...     def run(self, df: pd.DataFrame, params: Dict) -> BacktestResult:
-        ...         # 신호 생성 로직
         ...         signals = [...]
-        ...         # 지표 계산
         ...         result = BacktestResult(
         ...             signals=signals,
         ...             samples=len(signals),
@@ -104,6 +103,19 @@ class Strategy(ABC):
         ...             avg_hold_bars=1.0
         ...         )
         ...         return result
+
+    Example (Realtime):
+        >>> class MyStrategy(Strategy):
+        ...     def initialize_with_history(self, df: pd.DataFrame, params: Dict) -> None:
+        ...         self.window = params.get('window', 20)
+        ...         self.data = df.tail(self.window)
+        ...         self.last_signal = None
+        ...
+        ...     def process_candle(self, candle: Dict) -> Optional[Signal]:
+        ...         self.data = pd.concat([self.data, [candle]])
+        ...         self.data = self.data.tail(self.window)
+        ...         signal = self._generate_signal()
+        ...         return signal
     """
 
     @abstractmethod
@@ -130,3 +142,134 @@ class Strategy(ABC):
             HTTPException: 외부 API 오류 등
         """
         pass
+
+    def initialize_with_history(self, df: pd.DataFrame, params: Dict) -> None:
+        """
+        실시간 전략 실행을 위해 히스토리 데이터로 전략을 초기화합니다.
+
+        이 메서드는 실시간 시뮬레이션 시작 시 호출되며, 전략이 필요한 최소 윈도우만큼의
+        과거 데이터를 로드하고 내부 상태를 초기화합니다.
+
+        기본 구현은 아무 작업도 하지 않으므로, 실시간 모드를 지원하려면
+        서브클래스에서 오버라이드해야 합니다.
+
+        Args:
+            df (pd.DataFrame): 초기 히스토리 OHLCV 데이터
+                - timestamp: UTC 기준 시간 (timezone-aware)
+                - symbol: 심볼명
+                - timeframe: 타임프레임
+                - open, high, low, close: 가격
+                - volume: 거래량
+                일반적으로 전략에 필요한 최소 윈도우 크기(예: 200 캔들)만 포함
+
+            params (Dict): 전략 파라미터
+
+        Raises:
+            ValueError: 히스토리 데이터 부족 또는 파라미터 오류
+
+        Example:
+            >>> def initialize_with_history(self, df, params):
+            ...     if len(df) < params.get('min_window', 20):
+            ...         raise ValueError(f"Need at least {params['min_window']} candles")
+            ...     self.data_buffer = df.tail(params['min_window']).copy()
+            ...     self.params = params
+        """
+        pass
+
+    def process_candle(self, candle: Dict) -> Optional[Signal]:
+        """
+        새로운 캔들을 처리하고 신호를 생성합니다.
+
+        이 메서드는 실시간 모드에서 매 캔들마다 호출됩니다.
+        기본 구현은 None을 반환하므로, 실시간 모드를 지원하려면
+        서브클래스에서 오버라이드해야 합니다.
+
+        Args:
+            candle (Dict): 새로운 캔들 데이터
+                - timestamp: pd.Timestamp (UTC)
+                - open: float
+                - high: float
+                - low: float
+                - close: float
+                - volume: float
+
+        Returns:
+            Optional[Signal]: 생성된 신호 또는 None (신호가 없는 경우)
+
+        Example:
+            >>> def process_candle(self, candle):
+            ...     row = pd.Series(candle)
+            ...     self.data_buffer = pd.concat([self.data_buffer, [row]])
+            ...     self.data_buffer = self.data_buffer.tail(self.window)
+            ...
+            ...     if len(self.data_buffer) < self.window:
+            ...         return None
+            ...
+            ...     signal_side = self._check_signal()
+            ...     if signal_side:
+            ...         return Signal(
+            ...             timestamp=candle['timestamp'],
+            ...             side=signal_side,
+            ...             price=candle['close'],
+            ...             confidence=0.8
+            ...         )
+            ...     return None
+        """
+        return None
+
+    def get_state(self) -> Dict:
+        """
+        전략의 현재 상태를 반환합니다.
+
+        재연결이나 장애 복구 시 전략 상태를 직렬화하기 위해 사용됩니다.
+        기본 구현은 빈 딕셔너리를 반환하므로, 상태 저장이 필요한 경우
+        서브클래스에서 오버라이드해야 합니다.
+
+        Returns:
+            Dict: 전략의 현재 상태 (JSON 직렬화 가능해야 함)
+
+        Example:
+            >>> def get_state(self):
+            ...     return {
+            ...         'data_buffer': self.data_buffer.to_dict(orient='records'),
+            ...         'last_signal_price': self.last_signal_price,
+            ...         'indicator_values': self.indicator_values
+            ...     }
+        """
+        return {}
+
+    def restore_state(self, state: Dict) -> None:
+        """
+        이전에 저장된 상태로 전략을 복원합니다.
+
+        기본 구현은 아무 작업도 하지 않으므로, 상태 복원이 필요한 경우
+        서브클래스에서 오버라이드해야 합니다.
+
+        Args:
+            state (Dict): get_state()가 반환한 상태 딕셔너리
+
+        Example:
+            >>> def restore_state(self, state):
+            ...     self.data_buffer = pd.DataFrame(state['data_buffer'])
+            ...     self.last_signal_price = state.get('last_signal_price')
+            ...     self.indicator_values = state.get('indicator_values', {})
+        """
+        pass
+
+    @property
+    def min_history_window(self) -> int:
+        """
+        전략이 필요한 최소 히스토리 윈도우 크기를 반환합니다.
+
+        실시간 모드에서 초기화 시 이 크기만큼의 과거 캔들을 로드합니다.
+        기본값은 200이며, 서브클래스에서 오버라이드할 수 있습니다.
+
+        Returns:
+            int: 최소 필요 캔들 수
+
+        Example:
+            >>> @property
+            >>> def min_history_window(self):
+            ...     return self.params.get('lookback_period', 20)
+        """
+        return 200
