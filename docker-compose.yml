@@ -184,6 +184,38 @@ services:
     profiles:
       - frontend-test
 
+  # E2E 테스트 (End-to-End Integration Testing)
+  e2e-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coin-e2e-test
+    environment:
+      - DATA_ROOT=/data
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DATABASE_URL=postgresql://coin_user:coin_password@postgres:5432/coin_db
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/data
+      - ./backend:/app/backend
+      - ./scripts:/app/scripts
+      - ./tests:/app/tests
+    working_dir: /app
+    command: ["python", "scripts/e2e_test_scenarios.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - coin-network
+    profiles:
+      - e2e-test
+
 networks:
   coin-network:
     driver: bridge
