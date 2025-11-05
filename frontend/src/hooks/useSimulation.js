@@ -15,6 +15,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
 
   const [connected, setConnected] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
+  const [hasRealtimeData, setHasRealtimeData] = useState(false); // WebSocket 데이터 유효성 플래그
   const [signals, setSignals] = useState([]);
   const [positions, setPositions] = useState([]);
   const [performance, setPerformance] = useState(null);
@@ -25,6 +26,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
   const authTimeoutRef = useRef(null);
+  const shouldStopReconnecting = useRef(false); // 재연결 중단 플래그
 
   /**
    * WebSocket 연결 설정
@@ -54,9 +56,10 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
             ws.current?.close();
           }, authTimeout);
         } else {
-          // 토큰 없으면 명시적으로 에러 표시
+          // 토큰 없으면 명시적으로 에러 표시 및 재연결 중단
           setError('JWT 토큰이 필요합니다. 토큰을 설정한 후 다시 시도하세요.');
           setConnected(false);
+          shouldStopReconnecting.current = true; // 재연결 중단
           ws.current?.close();
         }
       };
@@ -88,6 +91,13 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
         console.log('WebSocket disconnected');
         setConnected(false);
         setAuthenticated(false); // 재연결 시 인증 상태 리셋
+        setHasRealtimeData(false); // WebSocket 데이터 무효화
+
+        // WebSocket 데이터 초기화 (REST fallback 사용)
+        setSignals([]);
+        setPositions([]);
+        setPerformance(null);
+        // simulationStatus는 REST에서 갱신되도록 유지
 
         // 타임아웃 정리
         if (authTimeoutRef.current) {
@@ -95,12 +105,21 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
           authTimeoutRef.current = null;
         }
 
-        // 재연결 시도
-        if (reconnectAttempts.current < maxReconnectAttempts) {
+        // 재연결 시도 (토큰이 있고, 재연결 중단 플래그가 없을 때만)
+        if (
+          !shouldStopReconnecting.current &&
+          token &&
+          reconnectAttempts.current < maxReconnectAttempts
+        ) {
           reconnectAttempts.current += 1;
           const delay = Math.pow(2, reconnectAttempts.current) * 1000;
           console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current})`);
           setTimeout(connect, delay);
+        } else if (shouldStopReconnecting.current) {
+          // 재연결 중단 플래그가 설정되었으면 에러 메시지 유지
+          console.log('Reconnection stopped due to authentication or token issues');
+        } else if (!token) {
+          setError('JWT 토큰이 필요합니다. 토큰을 설정한 후 다시 시도하세요.');
         } else {
           setError('WebSocket 연결 실패: 최대 재연결 시도 횟수 초과');
         }
@@ -122,7 +141,9 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
         // 인증 성공
         console.log('Authentication successful');
         setAuthenticated(true);
+        setHasRealtimeData(true); // WebSocket 데이터 유효화
         setError(null);
+        shouldStopReconnecting.current = false; // 재연결 중단 플래그 해제
         break;
 
       case 'error':
@@ -131,6 +152,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
           console.error('Authentication failed:', payload?.message);
           setError('인증 실패: ' + (payload?.message || '토큰이 유효하지 않습니다'));
           setConnected(false);
+          shouldStopReconnecting.current = true; // 인증 실패 시 재연결 중단
           ws.current?.close();
         } else {
           setError('서버 오류: ' + (payload?.message || 'Unknown error'));
@@ -247,6 +269,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
     // 상태
     connected,
     authenticated,
+    hasRealtimeData, // WebSocket 데이터 유효성
     signals,
     positions,
     performance,

@@ -38,6 +38,7 @@ export const SimulationDashboard = ({
   const {
     connected,
     authenticated,
+    hasRealtimeData,
     signals,
     positions,
     performance,
@@ -57,9 +58,16 @@ export const SimulationDashboard = ({
   const [restStatus, setRestStatus] = useState(null);
   const [restPositions, setRestPositions] = useState([]);
   const [restHistory, setRestHistory] = useState([]);
+  const [restPerformance, setRestPerformance] = useState(null);
 
-  // 통합 포지션 데이터 (WebSocket 우선, 없으면 REST 사용)
-  const mergedPositions = positions.length > 0 ? positions : restPositions;
+  // 통합 포지션 데이터 (WebSocket 유효하면 사용, 아니면 REST 사용)
+  const mergedPositions = hasRealtimeData && positions.length > 0 ? positions : restPositions;
+
+  // 통합 성과 데이터 (WebSocket 유효하면 사용, 아니면 REST 사용)
+  const mergedPerformance = hasRealtimeData && performance ? performance : restPerformance;
+
+  // 통합 시뮬레이션 상태 (WebSocket 유효하면 사용, 아니면 REST 사용)
+  const mergedSimulationStatus = simulationStatus || restStatus;
 
   // 초기 데이터 로딩 (REST API)
   useEffect(() => {
@@ -91,6 +99,25 @@ export const SimulationDashboard = ({
           // trades 배열이 있으면 저장, 아니면 data 필드 확인
           const tradeList = Array.isArray(historyData) ? historyData : historyData.trades || [];
           setRestHistory(tradeList);
+
+          // REST 거래 이력으로부터 성과 지표 계산
+          if (tradeList.length > 0) {
+            const totalPnl = tradeList.reduce((sum, trade) => sum + (trade.realized_pnl || 0), 0);
+            const winCount = tradeList.filter((t) => t.realized_pnl > 0).length;
+            const loseCount = tradeList.filter((t) => t.realized_pnl < 0).length;
+            const winRate = (winCount / tradeList.length) * 100;
+
+            setRestPerformance({
+              timestamp: new Date().toISOString(),
+              total_pnl: Math.round(totalPnl * 100) / 100,
+              total_pnl_pct: Math.round((totalPnl / (tradeList.length * 100)) * 100) / 100,
+              win_rate: Math.round(winRate * 100) / 100,
+              max_drawdown: 0, // 간단한 계산
+              total_trades: tradeList.length,
+              win_count: winCount,
+              lose_count: loseCount,
+            });
+          }
         }
 
         setInitialDataLoaded(true);
@@ -143,8 +170,8 @@ export const SimulationDashboard = ({
           setRestStatus(statusData);
         }
 
-        // 포지션 갱신 (WebSocket이 있으면 사용하지 않음)
-        if (positions.length === 0) {
+        // 포지션 갱신 (WebSocket 데이터가 없을 때만 사용)
+        if (!hasRealtimeData) {
           const positionsRes = await fetch(`${apiUrl}/simulation/positions`);
           if (positionsRes.ok) {
             const positionsData = await positionsRes.json();
@@ -154,13 +181,32 @@ export const SimulationDashboard = ({
           }
         }
 
-        // 거래 이력 갱신
+        // 거래 이력 갱신 (항상 갱신)
         const historyRes = await fetch(`${apiUrl}/simulation/history?limit=50`);
         if (historyRes.ok) {
           const historyData = await historyRes.json();
           console.log('Polled history:', historyData);
           const tradeList = Array.isArray(historyData) ? historyData : historyData.trades || [];
           setRestHistory(tradeList);
+
+          // REST 거래 이력으로부터 성과 지표 갱신
+          if (tradeList.length > 0 && !hasRealtimeData) {
+            const totalPnl = tradeList.reduce((sum, trade) => sum + (trade.realized_pnl || 0), 0);
+            const winCount = tradeList.filter((t) => t.realized_pnl > 0).length;
+            const loseCount = tradeList.filter((t) => t.realized_pnl < 0).length;
+            const winRate = (winCount / tradeList.length) * 100;
+
+            setRestPerformance({
+              timestamp: new Date().toISOString(),
+              total_pnl: Math.round(totalPnl * 100) / 100,
+              total_pnl_pct: Math.round((totalPnl / (tradeList.length * 100)) * 100) / 100,
+              win_rate: Math.round(winRate * 100) / 100,
+              max_drawdown: 0,
+              total_trades: tradeList.length,
+              win_count: winCount,
+              lose_count: loseCount,
+            });
+          }
         }
       } catch (err) {
         console.error('Failed to poll data:', err);
@@ -174,7 +220,7 @@ export const SimulationDashboard = ({
         clearInterval(pollInterval);
       }
     };
-  }, [autoRefresh, initialDataLoaded, apiUrl, positions.length]);
+  }, [autoRefresh, initialDataLoaded, apiUrl, hasRealtimeData]);
 
   const handleSymbolToggle = (symbol) => {
     setSelectedSymbols((prev) => {
@@ -214,6 +260,33 @@ export const SimulationDashboard = ({
             </span>
           </div>
         </div>
+
+        {/* 토큰 입력 필드 */}
+        {!token && (
+          <div className="token-input-banner">
+            <span className="info-icon">ℹ️</span>
+            <span className="info-text">JWT 토큰이 필요합니다.</span>
+            <input
+              type="password"
+              placeholder="JWT 토큰 입력..."
+              value=""
+              onChange={(e) => {
+                const newToken = e.target.value;
+                setToken(newToken);
+                if (newToken) {
+                  localStorage.setItem('simulation_token', newToken);
+                }
+              }}
+              className="token-input"
+            />
+            <button
+              onClick={() => window.location.reload()}
+              className="btn btn-sm btn-primary"
+            >
+              연결 재시도
+            </button>
+          </div>
+        )}
 
         {error && (
           <div className="error-banner">
@@ -272,22 +345,22 @@ export const SimulationDashboard = ({
         </div>
       </div>
 
-      {simulationStatus && (
+      {mergedSimulationStatus && (
         <div className="simulation-info">
           <div className="info-item">
             <span className="info-label">세션:</span>
-            <span className="info-value">{simulationStatus.session_id || '-'}</span>
+            <span className="info-value">{mergedSimulationStatus.session_id || '-'}</span>
           </div>
           <div className="info-item">
             <span className="info-label">상태:</span>
             <span className="info-value">
-              {simulationStatus.is_running ? '실행 중' : '중지됨'}
+              {mergedSimulationStatus.is_running ? '실행 중' : '중지됨'}
             </span>
           </div>
           <div className="info-item">
             <span className="info-label">WebSocket 클라이언트:</span>
             <span className="info-value">
-              {simulationStatus.websocket_clients || 0}개
+              {mergedSimulationStatus.websocket_clients || 0}개
             </span>
           </div>
         </div>
@@ -295,7 +368,7 @@ export const SimulationDashboard = ({
 
       <div className="dashboard-grid">
         <div className="dashboard-panel profit-panel">
-          <ProfitChart performance={performance} positions={mergedPositions} />
+          <ProfitChart performance={mergedPerformance} positions={mergedPositions} />
         </div>
 
         <div className="dashboard-panel signals-panel">
