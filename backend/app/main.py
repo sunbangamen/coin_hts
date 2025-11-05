@@ -889,16 +889,26 @@ async def start_simulation(request: SimulationStartRequest):
             f"strategy_count={sum(len(v) for v in strategies_dict.values())}"
         )
 
-        # 시뮬레이션 시작
-        session_id = await orchestrator.start_simulation(
+        # 시뮬레이션을 백그라운드 작업으로 시작 (이벤트 루프 블로킹 방지)
+        import asyncio
+        asyncio.create_task(orchestrator.start_simulation(
             symbols=request.symbols,
             strategies=strategies_dict,
             redis_client=redis_conn,
+        ))
+
+        logger.info(f"Simulation startup scheduled")
+
+        # 즉시 상태 반환 (세션 ID는 임시)
+        return SimulationStatusResponse(
+            session_id="initializing",
+            is_running=True,
+            websocket_clients=0,
+            active_positions=0,
+            total_realized_pnl=0.0,
+            total_unrealized_pnl=0.0,
+            closed_trades_count=0,
         )
-
-        logger.info(f"Simulation started: session_id={session_id}")
-
-        return orchestrator.get_simulation_status()
 
     except HTTPException:
         raise
