@@ -38,6 +38,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
         setConnected(true);
         setError(null);
         reconnectAttempts.current = 0;
+        setAuthenticated(false); // 재연결 시 인증 상태 리셋
 
         // 인증 메시지 전송
         if (token) {
@@ -48,21 +49,30 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
 
           // 인증 타임아웃 설정
           authTimeoutRef.current = setTimeout(() => {
-            if (!authenticated) {
-              setError('인증 타임아웃: 서버에서 응답이 없습니다');
-              setConnected(false);
-              ws.current?.close();
-            }
+            setError('인증 타임아웃: 서버에서 응답이 없습니다');
+            setConnected(false);
+            ws.current?.close();
           }, authTimeout);
         } else {
-          // 토큰 없으면 즉시 authenticated
-          setAuthenticated(true);
+          // 토큰 없으면 명시적으로 에러 표시
+          setError('JWT 토큰이 필요합니다. 토큰을 설정한 후 다시 시도하세요.');
+          setConnected(false);
+          ws.current?.close();
         }
       };
 
       ws.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+
+          // 인증 확인 후 타임아웃 정리
+          if (data.type === 'connection_established' || data.type === 'error') {
+            if (authTimeoutRef.current) {
+              clearTimeout(authTimeoutRef.current);
+              authTimeoutRef.current = null;
+            }
+          }
+
           handleMessage(data);
         } catch (err) {
           console.error('Failed to parse WebSocket message:', err);
@@ -77,6 +87,13 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
       ws.current.onclose = () => {
         console.log('WebSocket disconnected');
         setConnected(false);
+        setAuthenticated(false); // 재연결 시 인증 상태 리셋
+
+        // 타임아웃 정리
+        if (authTimeoutRef.current) {
+          clearTimeout(authTimeoutRef.current);
+          authTimeoutRef.current = null;
+        }
 
         // 재연결 시도
         if (reconnectAttempts.current < maxReconnectAttempts) {
@@ -92,7 +109,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
       console.error('Failed to connect WebSocket:', err);
       setError('WebSocket 연결 실패');
     }
-  }, [wsUrl]);
+  }, [wsUrl, token, authTimeout]);
 
   /**
    * WebSocket 메시지 처리
@@ -101,6 +118,25 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
     const { type, data: payload } = data;
 
     switch (type) {
+      case 'connection_established':
+        // 인증 성공
+        console.log('Authentication successful');
+        setAuthenticated(true);
+        setError(null);
+        break;
+
+      case 'error':
+        // 에러 처리
+        if (payload?.code === 'AUTH_FAILED') {
+          console.error('Authentication failed:', payload?.message);
+          setError('인증 실패: ' + (payload?.message || '토큰이 유효하지 않습니다'));
+          setConnected(false);
+          ws.current?.close();
+        } else {
+          setError('서버 오류: ' + (payload?.message || 'Unknown error'));
+        }
+        break;
+
       case 'signal_created':
         // 새로운 신호 추가
         setSignals((prev) => [payload, ...prev].slice(0, 100)); // 최대 100개 유지
@@ -210,6 +246,7 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
   return {
     // 상태
     connected,
+    authenticated,
     signals,
     positions,
     performance,
