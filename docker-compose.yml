@@ -78,7 +78,7 @@ services:
       - coin-network
 
     # FastAPI 서버 실행 명령
-    command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   # RQ 워커 (비동기 백테스트 작업 처리)
   worker:
