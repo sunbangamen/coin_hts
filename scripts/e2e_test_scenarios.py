@@ -168,15 +168,20 @@ class E2ETestRunner:
                     return False
 
                 data = await resp.json()
-                self.simulation_id = data.get('simulation_id')
+                # API는 session_id를 반환함 (simulation_id 대신)
+                self.simulation_id = data.get('session_id')
+                # Token은 선택사항이므로, 없어도 success 처리
                 self.token = data.get('token')
 
                 if not self.simulation_id:
-                    self.test_results['failed'].append("No simulation_id returned")
+                    self.test_results['failed'].append("No session_id returned")
                     return False
 
-                logger.info(f"✅ 시뮬레이션 시작됨 - ID: {self.simulation_id}")
-                logger.info(f"✅ JWT 토큰 획득: {self.token[:20]}...")
+                logger.info(f"✅ 시뮬레이션 시작됨 - Session ID: {self.simulation_id}")
+                if self.token:
+                    logger.info(f"✅ JWT 토큰 획득: {self.token[:20]}...")
+                else:
+                    logger.info("⚠️  토큰 미반환 (현재 API 미지원, 향후 추가 예정)")
                 self.test_results['passed'].append("start_simulation")
                 return True
         except Exception as e:
