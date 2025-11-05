@@ -94,7 +94,8 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
         setHasRealtimeData(false); // WebSocket 데이터 무효화
 
         // WebSocket 데이터 초기화 (REST fallback 사용)
-        setSignals([]);
+        // 신호는 마지막 신호를 유지하기 위해 초기화하지 않음
+        // setSignals([]) - 제거: 신호는 유지하되, UI에서 "실시간 연결 필요" 메시지 표시
         setPositions([]);
         setPerformance(null);
         setSimulationStatus(null); // REST에서 갱신되도록 null로 초기화
@@ -243,9 +244,11 @@ export const useSimulation = (wsUrl = 'ws://localhost:8001', options = {}) => {
   }, [send]);
 
   /**
-   * 신호 초기화
+   * 신호 초기화 (사용자가 명시적으로 신호를 지울 때만 호출)
+   * WebSocket 끊김 시에는 자동으로 초기화되지 않음 (마지막 신호 유지)
    */
   const clearSignals = useCallback(() => {
+    console.log('Clearing signals manually');
     setSignals([]);
   }, []);
 
