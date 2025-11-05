@@ -307,13 +307,17 @@ class E2ETestRunner:
                 f"{self.config['api_url']}/simulation/positions",
                 timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
+                logger.info(f"  - HTTP Status: {resp.status}")
                 if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"  - Error Response: {error_text[:200]}")
                     self.test_results['failed'].append(
                         f"Get positions failed: {resp.status}"
                     )
                     return False
 
                 data = await resp.json()
+                logger.info(f"  - Response keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
                 positions = data if isinstance(data, list) else data.get('positions', [])
 
                 logger.info(f"✅ 활성 포지션: {len(positions)}개")
@@ -364,7 +368,10 @@ class E2ETestRunner:
                 f"{self.config['api_url']}/simulation/stop",
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
+                logger.info(f"  - HTTP Status: {resp.status}")
                 if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"  - Error Response: {error_text[:200]}")
                     self.test_results['failed'].append(
                         f"Stop simulation failed: {resp.status}"
                     )
@@ -385,13 +392,17 @@ class E2ETestRunner:
                 f"{self.config['api_url']}/simulation/history?limit=50",
                 timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
+                logger.info(f"  - HTTP Status: {resp.status}")
                 if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"  - Error Response: {error_text[:200]}")
                     self.test_results['failed'].append(
                         f"Get history failed: {resp.status}"
                     )
                     return False
 
                 data = await resp.json()
+                logger.info(f"  - Response keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
                 trades = data if isinstance(data, list) else data.get('trades', [])
 
                 logger.info(f"✅ 거래 이력: {len(trades)}개")
