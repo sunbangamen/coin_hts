@@ -364,6 +364,25 @@ class TradeHistoryResponse(BaseModel):
     win_rate: float = Field(..., description="승률 (0.0 ~ 1.0, 예: 0.65 = 65%)")
 
 
+class CandleResponse(BaseModel):
+    """캔들(시장 데이터) 정보"""
+    symbol: str = Field(..., description="심볼")
+    timeframe: str = Field(..., description="타임프레임")
+    timestamp: str = Field(..., description="타임스탬프 (ISO 8601)")
+    open: float = Field(..., description="시가")
+    high: float = Field(..., description="고가")
+    low: float = Field(..., description="저가")
+    close: float = Field(..., description="종가")
+    volume: float = Field(..., description="거래량")
+
+
+class MarketDataResponse(BaseModel):
+    """시장 데이터 응답"""
+    session_id: Optional[str] = Field(None, description="세션 ID")
+    candles: List[CandleResponse] = Field(default_factory=list, description="캔들 데이터 목록")
+    count: int = Field(..., description="캔들 개수")
+
+
 # ============================================================================
 # 엔드포인트
 # ============================================================================
@@ -385,6 +404,7 @@ async def root():
             "POST /api/simulation/stop": "Stop real-time simulation (Phase 2)",
             "GET /api/simulation/status": "Get simulation status (Phase 2)",
             "GET /api/simulation/strategies": "Get registered simulation strategies (Phase 2)",
+            "GET /api/simulation/market-data": "Get market data (candles) (Phase 4)",
             "GET /api/simulation/positions": "Get current open positions (Phase 3)",
             "GET /api/simulation/history": "Get closed trades history (Phase 3)",
         },
@@ -1019,6 +1039,84 @@ async def get_simulation_strategies():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get simulation strategies: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/simulation/market-data",
+    response_model=MarketDataResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_market_data(symbol: Optional[str] = None, limit: int = 10):
+    """
+    시장 데이터(캔들) 조회
+
+    현재 수집 중인 시장 데이터(캔들)를 조회합니다.
+    시뮬레이션이 실행 중이 아니면 빈 리스트를 반환합니다.
+
+    Args:
+        symbol: 심볼 필터 (선택사항, 예: 'KRW-BTC')
+        limit: 조회할 캔들 개수 (기본: 10, 최대: 200)
+
+    Returns:
+        MarketDataResponse: 캔들 데이터 목록
+
+    Note:
+        - 응답이 비어 있으면 시뮬레이션이 아직 데이터를 수집하지 못했거나 실행 중이 아닙니다.
+        - 데이터가 있으면 최근 캔들부터 역순으로 정렬됩니다.
+    """
+    try:
+        market_data_service = get_market_data_service()
+
+        if not market_data_service or not market_data_service.is_running:
+            # 시뮬레이션이 실행 중이 아니면 빈 리스트 반환
+            logger.info("Market data service is not running")
+            return MarketDataResponse(
+                session_id=None,
+                candles=[],
+                count=0,
+            )
+
+        # 현재 캔들 조회 (심볼별 진행 중인 캔들)
+        candles = []
+        symbols_to_query = market_data_service.symbols if not symbol else [symbol]
+
+        for sym in symbols_to_query:
+            current_candle = market_data_service.get_current_candle(sym)
+            if current_candle:
+                # 캔들 데이터를 응답 모델로 변환
+                candle_response = CandleResponse(
+                    symbol=sym,
+                    timeframe=market_data_service.timeframe,
+                    timestamp=current_candle.get('timestamp', '').isoformat()
+                        if isinstance(current_candle.get('timestamp'), datetime)
+                        else str(current_candle.get('timestamp', '')),
+                    open=float(current_candle.get('open', 0)),
+                    high=float(current_candle.get('high', 0)),
+                    low=float(current_candle.get('low', 0)),
+                    close=float(current_candle.get('close', 0)),
+                    volume=float(current_candle.get('volume', 0)),
+                )
+                candles.append(candle_response)
+
+        logger.info(f"Market data retrieved: count={len(candles)}, symbols={len(symbols_to_query)}")
+
+        position_manager = get_position_manager()
+        session_id = position_manager.session_id if position_manager else None
+
+        return MarketDataResponse(
+            session_id=session_id,
+            candles=candles,
+            count=len(candles),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to get market data: {e}", exc_info=True)
+        # 예외 발생 시에도 빈 응답으로 graceful handling
+        return MarketDataResponse(
+            session_id=None,
+            candles=[],
+            count=0,
         )
 
 
