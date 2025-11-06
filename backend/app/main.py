@@ -55,6 +55,7 @@ app.include_router(data_router.router)
 # 환경변수
 DATA_ROOT = os.getenv("DATA_ROOT", "/data")
 RESULTS_DIR = os.path.join(DATA_ROOT, "results")
+ENABLE_SCHEDULER = os.getenv('ENABLE_SCHEDULER', 'true').lower() == 'true'
 
 # RQ 큐 초기화
 rq_queue = Queue(connection=redis_conn)
@@ -1316,20 +1317,24 @@ async def get_trade_history(
 
 @app.on_event("startup")
 async def startup_scheduler():
-    """애플리케이션 시작 시 스케줄러 초기화"""
+    """애플리케이션 시작 시 스케줄러 초기화 (환경 변수 기반)"""
+    # Step 1: ENABLE_SCHEDULER 환경 플래그 확인
+    if not ENABLE_SCHEDULER:
+        logger.warning("⚠️  ENABLE_SCHEDULER=false, 스케줄러를 시작하지 않습니다")
+        logger.info("💡 수동 트리거 사용 가능: POST /api/scheduler/trigger")
+        return
+
     try:
         logger.info("🚀 스케줄러 시작 중...")
 
-        # 스케줄러 시작
-        start_scheduler()
+        # Step 3: 스케줄러 시작 (try/except 분리)
+        if not start_scheduler():
+            logger.error("❌ 스케줄러 시작 실패")
+            return
 
-        # 매일 09:00 UTC에 자동 수집 스케줄 설정
-        # UTC 09:00 = KST 18:00 (오후 6시)
+        # Step 2: 환경 변수 기반 기본값으로 스케줄 설정
+        # 인자를 전달하지 않으면 scheduler.py의 DEFAULT_SYMBOLS, SCHEDULER_HOUR 등 사용
         schedule_daily_collection(
-            symbols=['KRW-BTC', 'KRW-ETH', 'KRW-XRP'],
-            timeframes=['1H', '1D'],
-            hour=9,  # UTC
-            minute=0,
             days=1,
             overwrite=False
         )

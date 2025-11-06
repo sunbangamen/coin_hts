@@ -290,8 +290,39 @@ def get_scheduler_status():
 
     Returns:
         dict: 스케줄러 상태, 등록된 작업, 최근 실행 결과, RQ 큐 상태
+              ENABLE_SCHEDULER=false일 때는 간단한 상태만 반환
     """
     global scheduler, redis_conn, last_run_result, last_run_time
+
+    # Step 4: ENABLE_SCHEDULER=false일 때 disabled 상태 반환
+    if not ENABLE_SCHEDULER:
+        return {
+            'enabled': False,
+            'running': False,
+            'message': 'Scheduler is disabled (ENABLE_SCHEDULER=false)',
+            'note': 'Manual triggers are available via POST /api/scheduler/trigger',
+            'redis': {
+                'host': REDIS_HOST,
+                'port': REDIS_PORT,
+                'connected': False
+            },
+            'scheduled_jobs': [],
+            'last_run': {
+                'time': None,
+                'result': None
+            },
+            'job_history': [],
+            'rq_queue': {
+                'size': 0,
+                'error': None
+            },
+            'configuration': {
+                'hour': SCHEDULER_HOUR,
+                'minute': SCHEDULER_MINUTE,
+                'symbols': DEFAULT_SYMBOLS,
+                'timeframes': DEFAULT_TIMEFRAMES
+            }
+        }
 
     status = {
         'enabled': ENABLE_SCHEDULER,

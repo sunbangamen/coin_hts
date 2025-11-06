@@ -165,6 +165,42 @@ docker-compose --profile worker down
 
 ## Step 3: 자동 스케줄링
 
+### 환경 변수 기반 설정
+
+모든 스케줄러 설정은 **환경 변수**를 통해 동적으로 제어됩니다:
+
+| 변수 | 기본값 | 설명 | 예시 |
+|------|-------|------|------|
+| `ENABLE_SCHEDULER` | `true` | 자동 스케줄링 활성화 여부 | `true` / `false` |
+| `SCHEDULER_HOUR` | `9` | 수집 시간 (UTC, 0-23) | `9` = UTC 09:00 = KST 18:00 |
+| `SCHEDULER_MINUTE` | `0` | 수집 분 (0-59) | `0` |
+| `SCHEDULER_SYMBOLS` | `KRW-BTC,KRW-ETH,KRW-XRP` | 수집 심볼 (쉼표 구분) | `KRW-BTC,KRW-ETH` |
+| `SCHEDULER_TIMEFRAMES` | `1H,1D` | 수집 타임프레임 (쉼표 구분) | `1H,1D` |
+| `REDIS_HOST` | `localhost` | Redis 호스트 | `localhost` / `redis.example.com` |
+| `REDIS_PORT` | `6379` | Redis 포트 | `6379` |
+
+#### ENABLE_SCHEDULER 상태별 동작
+
+**ENABLE_SCHEDULER=true (기본값)**
+```bash
+# 자동 스케줄링 활성화
+# - BackgroundScheduler 시작
+# - APScheduler를 이용한 매일 자동 실행
+# - 지정된 시간에 데이터 자동 수집
+# - /api/scheduler/status: 스케줄 정보 포함
+export ENABLE_SCHEDULER=true
+```
+
+**ENABLE_SCHEDULER=false**
+```bash
+# 자동 스케줄링 비활성화 (수동 모드)
+# - BackgroundScheduler 초기화 안 함 (메모리/CPU 절감)
+# - 수동 트리거만 가능: POST /api/scheduler/trigger
+# - /api/scheduler/status: "disabled" 상태 반환
+# - 여전히 모니터링 가능 (상태 조회, 수동 실행)
+export ENABLE_SCHEDULER=false
+```
+
 ### 구성 요소
 
 #### 1. 스케줄러 모듈 (`backend/app/scheduler.py`)
@@ -361,19 +397,40 @@ stopwaitsecs=600
 
 ## 체크리스트
 
-### 개발 환경
+### 개발 환경 (로컬 테스트)
 - [ ] Redis 실행 중
-- [ ] Backend 실행 중
-- [ ] Worker 실행 중
+- [ ] Backend 실행 중 (ENABLE_SCHEDULER=true 권장)
+- [ ] Worker 실행 중 (선택, 수동 테스트 시)
 - [ ] Parquet 파일 생성 확인
-- [ ] 스케줄러 상태 정상
+- [ ] 스케줄러 상태 정상 (GET /api/scheduler/status)
+- [ ] 수동 트리거 테스트 (POST /api/scheduler/trigger)
 
 ### 스테이징/프로덕션
 - [ ] Docker 이미지 빌드 완료
-- [ ] 환경 변수 설정
+- [ ] 환경 변수 설정 (.env 파일)
+  - [ ] ENABLE_SCHEDULER 값 확인
+  - [ ] SCHEDULER_HOUR/MINUTE 타임존 확인 (UTC 기준)
+  - [ ] SCHEDULER_SYMBOLS, SCHEDULER_TIMEFRAMES 설정
+  - [ ] REDIS_HOST/PORT 확인
 - [ ] Redis 백업 정책 수립
+- [ ] RQ Worker 모니터링 설정
+- [ ] verify_scheduler.py 정기 실행 (cron)
 - [ ] 모니터링/알림 구성
 - [ ] 재해 복구 계획 수립
+
+### ENABLE_SCHEDULER 설정별 체크사항
+
+**자동 모드 (ENABLE_SCHEDULER=true)**
+- [ ] BackgroundScheduler 초기화 확인 (로그)
+- [ ] 스케줄된 작업 확인 (GET /api/scheduler/status)
+- [ ] next_run_time이 올바르게 설정되었는지 확인
+- [ ] 지정된 시간에 자동 실행 확인 (RQ 큐 모니터링)
+
+**수동 모드 (ENABLE_SCHEDULER=false)**
+- [ ] 스케줄러 비활성화 로그 확인
+- [ ] GET /api/scheduler/status에서 "disabled" 메시지 확인
+- [ ] POST /api/scheduler/trigger로 수동 실행 가능 확인
+- [ ] 메모리/CPU 사용량이 감소했는지 확인
 
 ---
 
