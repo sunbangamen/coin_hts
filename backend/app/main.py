@@ -24,6 +24,7 @@ from backend.app.config import redis_conn
 from backend.app.simulation.simulation_orchestrator import get_orchestrator, close_orchestrator
 from backend.app.simulation.position_manager import get_position_manager
 from backend.app.market_data.market_data_service import get_market_data_service
+from backend.app.routers import data as data_router
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
@@ -40,6 +41,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 라우터 등록
+app.include_router(data_router.router)
 
 # 환경변수
 DATA_ROOT = os.getenv("DATA_ROOT", "/data")

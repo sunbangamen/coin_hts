@@ -6,10 +6,11 @@
 # 이 스크립트는 Docker Compose 환경에서 완전한 E2E 통합 테스트를 실행합니다.
 #
 # 사용법:
-#   ./scripts/run_e2e_tests.sh                  # 기본 E2E 테스트
-#   ./scripts/run_e2e_tests.sh --with-frontend  # 프론트엔드 포함
-#   ./scripts/run_e2e_tests.sh --with-unit      # 유닛 테스트 포함
-#   ./scripts/run_e2e_tests.sh --full           # 모든 테스트 (단위 + 통합 + E2E)
+#   ./scripts/run_e2e_tests.sh                      # 기본 E2E 테스트
+#   ./scripts/run_e2e_tests.sh --with-frontend      # 프론트엔드 포함
+#   ./scripts/run_e2e_tests.sh --with-unit          # 유닛 테스트 포함
+#   ./scripts/run_e2e_tests.sh --with-data-management # 데이터 관리 페이지 E2E 테스트
+#   ./scripts/run_e2e_tests.sh --full               # 모든 테스트 (단위 + 통합 + E2E)
 #
 ##############################################################################
 
@@ -62,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             TEST_MODE="e2e-unit"
             shift
             ;;
+        --with-data-management)
+            TEST_MODE="e2e-data-management"
+            shift
+            ;;
         --full)
             TEST_MODE="full"
             shift
@@ -73,15 +78,17 @@ End-to-End Testing Script
 사용법: ./scripts/run_e2e_tests.sh [옵션]
 
 옵션:
-    --with-frontend   E2E 테스트 + 프론트엔드 테스트 실행
-    --with-unit       E2E 테스트 + 백엔드 유닛 테스트 실행
-    --full            모든 테스트 실행 (유닛 + 통합 + E2E)
-    --help            도움말 표시
+    --with-frontend        E2E 테스트 + 프론트엔드 테스트 실행
+    --with-unit            E2E 테스트 + 백엔드 유닛 테스트 실행
+    --with-data-management E2E 테스트 + 데이터 관리 페이지 E2E 테스트 실행
+    --full                 모든 테스트 실행 (유닛 + 통합 + E2E)
+    --help                 도움말 표시
 
 예시:
-    ./scripts/run_e2e_tests.sh                  # 기본 E2E 테스트만
-    ./scripts/run_e2e_tests.sh --with-unit      # E2E + 유닛 테스트
-    ./scripts/run_e2e_tests.sh --full           # 모든 테스트
+    ./scripts/run_e2e_tests.sh                      # 기본 E2E 테스트만
+    ./scripts/run_e2e_tests.sh --with-unit          # E2E + 유닛 테스트
+    ./scripts/run_e2e_tests.sh --with-data-management # E2E + 데이터 관리 테스트
+    ./scripts/run_e2e_tests.sh --full               # 모든 테스트
 EOF
             exit 0
             ;;
@@ -199,7 +206,31 @@ if [[ "$TEST_MODE" == "e2e-frontend" ]] || [[ "$TEST_MODE" == "full" ]]; then
     print_success "프론트엔드 테스트 완료"
 fi
 
-# 5. 정리 및 요약
+# 5. 데이터 관리 페이지 E2E 테스트 실행 (--with-data-management 옵션)
+if [[ "$TEST_MODE" == "e2e-data-management" ]]; then
+    print_header "📊 데이터 관리 페이지 E2E 테스트 실행"
+    print_info "데이터 인벤토리 조회 및 파일 업로드 테스트 중..."
+    print_info "- 초기 빈 인벤토리 확인"
+    print_info "- 파일 업로드 및 검증"
+    print_info "- 업로드된 데이터 조회"
+    print_info "- 업로드된 데이터로 백테스트 실행"
+
+    # docker-compose 내 e2e-test 컨테이너에서 데이터 관리 E2E 테스트 실행
+    print_info "데이터 관리 E2E 테스트 컨테이너 시작 중..."
+
+    # Backend 서비스가 Docker 네트워크 내 "backend" DNS name으로 접근 가능
+    $DOCKER_COMPOSE run --rm -T e2e-test python scripts/e2e_test_data_management.py --base-url http://backend:8000
+    DATA_MGMT_RESULT=$?
+
+    if [ $DATA_MGMT_RESULT -ne 0 ]; then
+        print_error "데이터 관리 E2E 테스트 실패"
+        $DOCKER_COMPOSE down
+        exit 1
+    fi
+    print_success "데이터 관리 E2E 테스트 완료"
+fi
+
+# 6. 정리 및 요약
 print_header "✨ 테스트 완료"
 $DOCKER_COMPOSE down
 
@@ -212,6 +243,9 @@ case "$TEST_MODE" in
         ;;
     "e2e-frontend")
         print_success "E2E 통합 테스트 + 프론트엔드 테스트 성공!"
+        ;;
+    "e2e-data-management")
+        print_success "E2E 통합 테스트 + 데이터 관리 E2E 테스트 성공!"
         ;;
     "full")
         print_success "모든 테스트 성공!"
