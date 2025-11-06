@@ -80,7 +80,7 @@ services:
     # FastAPI 서버 실행 명령
     command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-  # RQ 워커 (비동기 백테스트 작업 처리)
+  # RQ 워커 (자동 데이터 수집 작업 처리)
   worker:
     build:
       context: .
@@ -98,12 +98,16 @@ services:
       - ./backend:/app/backend
       - ./scripts:/app/scripts
     working_dir: /app
-    command: ["rq", "worker", "-c", "backend.app.config", "--verbose"]
+    # RQ 워커: data_ingestion 큐 처리 (데이터 수집 작업)
+    command: ["rq", "worker", "data_ingestion", "-u", "redis://redis:6379", "--verbose"]
+    restart: on-failure
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backend:
+        condition: service_started
     networks:
       - coin-network
     profiles:

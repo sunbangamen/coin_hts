@@ -1,0 +1,678 @@
+# 자동 실시간 데이터 수집 파이프라인 완전 가이드
+
+**최종 작성일**: 2025-11-06
+**상태**: ✅ 완성 (Step 1-3 완료)
+
+---
+
+## 📋 목차
+1. [구조 개요](#구조-개요)
+2. [Step 1: 실제 API 테스트](#step-1-실제-api-테스트)
+3. [Step 2: RQ Worker 배포](#step-2-rq-worker-배포)
+4. [Step 3: 자동 스케줄링](#step-3-자동-스케줄링)
+5. [모니터링 및 문제 해결](#모니터링-및-문제-해결)
+6. [프로덕션 배포](#프로덕션-배포)
+
+---
+
+## 구조 개요
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  FastAPI Application (Backend)                           │
+│  - Startup Event: 스케줄러 초기화                         │
+│  - Shutdown Event: 스케줄러 정리                          │
+│  - API Endpoint: GET /api/scheduler/status              │
+└────────────┬────────────────────────────────────────────┘
+             │
+             ├─────────────────────────────────────────────┐
+             │                                             │
+    ┌────────▼────────────┐                    ┌──────────▼─────────┐
+    │  APScheduler        │                    │  RQ (Redis Queue)  │
+    │  - Daily Schedule   │───────────────────▶│  - Job Queue       │
+    │  - 09:00 UTC Run    │                    │  - Background Jobs │
+    └────────────────────┘                    └──────────┬─────────┘
+                                                        │
+                                            ┌───────────▼──────────┐
+                                            │  RQ Worker           │
+                                            │  - Job Processor     │
+                                            │  - PID 33494         │
+                                            └───────────┬──────────┘
+                                                        │
+                    ┌───────────────────────────────────┼──────────────────────┐
+                    │                                   │                      │
+         ┌──────────▼──────────┐           ┌────────────▼────────┐  ┌─────────▼──────┐
+         │ Upbit REST API      │           │  fetch_candles_job  │  │  Parquet Files │
+         │ GET /v1/candles/*   │           │  - Symbol: KRW-BTC  │  │  /data/        │
+         │ Rate: 10/sec, 600/m │           │  - Timeframe: 1H    │  │  - KRW-BTC/    │
+         └──────────────────────┘          │  - Days: 1          │  │  - KRW-ETH/    │
+                    ▲                      │  - Overwrite: False  │  │  - KRW-XRP/    │
+                    │                      └─────────────────────┘  └────────────────┘
+                    └──────────────────────────────────────────────────┘
+```
+
+---
+
+## Step 1: 실제 API 테스트
+
+### 목표
+Redis와 Upbit API가 정상 작동하는지 확인합니다.
+
+### 실행 방법
+
+```bash
+# 1. Redis 상태 확인
+redis-cli ping
+# 응답: PONG
+
+# 2. 실제 API 테스트 실행
+source venv/bin/activate
+python scripts/test_rq_job.py
+```
+
+### 예상 결과
+
+```
+✓ Redis 연결 성공
+✓ 작업 큐 추가 성공
+  Job ID: b0f81796-24be-4c86-b38b-4a8f443f9eb0
+  Status: JobStatus.QUEUED
+✓ 함수 실행 성공
+  Success: True
+  Message: KRW-BTC 1H 데이터 수집 완료
+✓ 배치 작업 큐 추가 성공
+✓ Parquet 파일 확인
+  경로: data/KRW-BTC/1H/2025.parquet
+  행 수: 50
+```
+
+### 검증 사항
+
+- ✅ Upbit API 정상 호출
+- ✅ Rate limiting 준수 (0.12초 간격, 분당 600회)
+- ✅ Parquet 파일 생성
+- ✅ 타임스탬프 정규화 (UTC)
+
+---
+
+## Step 2: RQ Worker 배포
+
+### 목표
+백그라운드에서 큐의 작업을 자동으로 처리하는 Worker를 배포합니다.
+
+### 설정 단계
+
+```bash
+# 1. DATA_ROOT 환경변수 설정
+export DATA_ROOT=/home/limeking/projects/worktree/coin-19/data
+
+# 2. 디렉토리 권한 설정 (중요!)
+chmod 777 $DATA_ROOT
+
+# 3. RQ Worker 시작
+source venv/bin/activate
+rq worker data_ingestion -u redis://localhost:6379 --verbose
+```
+
+### 작업 추가 테스트
+
+```bash
+source venv/bin/activate
+python3 << 'EOF'
+import redis
+from rq import Queue
+from backend.app.jobs import fetch_candles_job
+
+conn = redis.Redis(host='localhost', port=6379, db=0)
+q = Queue('data_ingestion', connection=conn)
+
+# 작업 추가
+job = q.enqueue(
+    fetch_candles_job,
+    symbol='KRW-ETH',
+    timeframe='1H',
+    days=1,
+    overwrite=False
+)
+print(f"✅ 작업 추가: {job.id}")
+EOF
+```
+
+### 작업자 상태 확인
+
+```bash
+# Worker 프로세스 확인
+ps aux | grep "rq worker"
+
+# 예상 출력:
+# limeking 33494  0.0  0.2 116904 34424 ? Sl 17:09 0:00 rq worker ...
+```
+
+### Docker Compose 배포
+
+```bash
+# 1. Worker 프로필로 시작
+docker-compose --profile worker up worker
+
+# 2. 로그 확인
+docker-compose logs -f worker
+
+# 3. 중지
+docker-compose --profile worker down
+```
+
+---
+
+## Step 3: 자동 스케줄링
+
+### 환경 변수 기반 설정
+
+모든 스케줄러 설정은 **환경 변수**를 통해 동적으로 제어됩니다:
+
+| 변수 | 기본값 | 설명 | 예시 |
+|------|-------|------|------|
+| `ENABLE_SCHEDULER` | `true` | 자동 스케줄링 활성화 여부 | `true` / `false` |
+| `SCHEDULER_HOUR` | `9` | 수집 시간 (UTC, 0-23) | `9` = UTC 09:00 = KST 18:00 |
+| `SCHEDULER_MINUTE` | `0` | 수집 분 (0-59) | `0` |
+| `SCHEDULER_SYMBOLS` | `KRW-BTC,KRW-ETH,KRW-XRP` | 수집 심볼 (쉼표 구분) | `KRW-BTC,KRW-ETH` |
+| `SCHEDULER_TIMEFRAMES` | `1H,1D` | 수집 타임프레임 (쉼표 구분) | `1H,1D` |
+| `REDIS_HOST` | `localhost` | Redis 호스트 | `localhost` / `redis.example.com` |
+| `REDIS_PORT` | `6379` | Redis 포트 | `6379` |
+
+#### ENABLE_SCHEDULER 상태별 동작
+
+**ENABLE_SCHEDULER=true (기본값)**
+```bash
+# 자동 스케줄링 활성화
+# - BackgroundScheduler 시작
+# - APScheduler를 이용한 매일 자동 실행
+# - 지정된 시간에 데이터 자동 수집
+# - /api/scheduler/status: 스케줄 정보 포함
+export ENABLE_SCHEDULER=true
+```
+
+**ENABLE_SCHEDULER=false**
+```bash
+# 자동 스케줄링 비활성화 (수동 모드)
+# - BackgroundScheduler 초기화 안 함 (메모리/CPU 절감)
+# - 수동 트리거만 가능: POST /api/scheduler/trigger
+# - /api/scheduler/status: "disabled" 상태 반환
+# - 여전히 모니터링 가능 (상태 조회, 수동 실행)
+export ENABLE_SCHEDULER=false
+```
+
+### 구성 요소
+
+#### 1. 환경 변수 기반 스케줄러 설정
+
+모든 스케줄링 설정은 **환경 변수**를 통해 동적으로 제어됩니다:
+
+```bash
+# .env 또는 시스템 환경 변수로 설정
+ENABLE_SCHEDULER=true                          # 자동 스케줄링 활성화
+SCHEDULER_HOUR=9                               # 실행 시간 (UTC, 0-23)
+SCHEDULER_MINUTE=0                             # 실행 분 (0-59)
+SCHEDULER_SYMBOLS=KRW-BTC,KRW-ETH,KRW-XRP     # 수집 심볼 (콤마 구분)
+SCHEDULER_TIMEFRAMES=1H,1D                     # 수집 타임프레임 (콤마 구분)
+```
+
+**Python 코드에서의 활용**:
+
+```python
+from backend.app.scheduler import schedule_daily_collection
+
+# 환경 변수에서 자동으로 설정됨
+# 필요시 명시적 파라미터로 오버라이드 가능
+schedule_daily_collection(
+    # symbols, timeframes, hour, minute은 생략하면 환경 변수 사용
+    days=1,          # 수집 기간: 최근 1일
+    overwrite=False  # 기존 파일 덮어쓰기 안 함
+)
+```
+
+**시간대 변환**:
+- UTC 09:00 = KST 18:00 (오후 6시)
+- SCHEDULER_HOUR를 변경하여 다른 시간으로 설정 가능
+
+#### 2. FastAPI 통합 (`backend/app/main.py`)
+
+```python
+@app.on_event("startup")
+async def startup_scheduler():
+    """앱 시작 시 스케줄러 초기화 (ENABLE_SCHEDULER=true일 때만)"""
+    if not ENABLE_SCHEDULER:
+        logger.warning("ENABLE_SCHEDULER=false, 스케줄러를 시작하지 않습니다")
+        return
+
+    if not start_scheduler():
+        logger.error("스케줄러 시작 실패")
+        return
+
+    # 환경 변수 기반 기본값으로 스케줄 설정
+    schedule_daily_collection(
+        days=1,
+        overwrite=False
+    )
+
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    """앱 종료 시 스케줄러 정리"""
+    stop_scheduler()
+
+@app.get("/api/scheduler/status")
+async def get_scheduler_status_endpoint():
+    """스케줄러 상태 조회"""
+    return get_scheduler_status()
+```
+
+### 실행 방법
+
+```bash
+# 1. Backend 시작 (스케줄러 자동 초기화)
+export DATA_ROOT=/home/limeking/projects/worktree/coin-19/data
+source venv/bin/activate
+python -m uvicorn backend.app.main:app --reload
+
+# 2. 로그 확인
+# 🚀 스케줄러 시작 중...
+# ✅ 스케줄러 준비 완료
+# ✅ 스케줄 설정 완료
+# 실행 시간: 매일 09:00 (UTC)
+
+# 3. 스케줄러 상태 확인
+curl http://localhost:8000/api/scheduler/status
+```
+
+### 예상 응답
+
+```json
+{
+  "running": true,
+  "jobs": [
+    {
+      "id": "daily_data_collection",
+      "name": "Daily Data Collection",
+      "trigger": "cron[hour='9', minute='0']",
+      "next_run": "2025-11-07T09:00:00+00:00"
+    }
+  ]
+}
+```
+
+---
+
+## Step 4: 프론트엔드 UI 통합
+
+### 개요
+
+자동 데이터 수집 스케줄러의 상태 모니터링 및 수동 실행을 위한 웹 기반 UI를 제공합니다.
+
+### 구성 요소
+
+#### 1. API 서비스 레이어 (`frontend/src/services/schedulerApi.js`)
+
+- `getSchedulerStatus()`: 스케줄러 상태 조회
+- `triggerScheduler()`: 수동 트리거 실행
+- `convertUtcToLocal()`: UTC → 로컬 타임존 변환
+- `formatErrorMessage()`: 사용자 친화적인 에러 메시지
+
+#### 2. UI 컴포넌트 (`frontend/src/components/SchedulerPanel.jsx`)
+
+**주요 기능:**
+
+| 기능 | 설명 | API 필드 |
+|------|------|----------|
+| 스케줄러 상태 표시 | 활성화, 실행 중, Redis 연결, 큐 크기 | `enabled`, `running`, `redis`, `rq_queue` |
+| 다음 실행 일정 | APScheduler 기반 스케줄 정보 표시 | `scheduled_jobs[].next_run` |
+| 현재 설정 조회 | 실행 시간, 심볼, 타임프레임, 수집 기간 | `configuration.*` |
+| 최근 실행 정보 | 마지막 실행 결과 및 상태 | `last_run.timestamp`, `last_run.success`, `last_run.message` |
+| 작업 히스토리 | 최근 10개 작업의 상세 정보 | `job_history[]` (timestamp, success, message, job_id) |
+| 수동 트리거 | 즉시 데이터 수집 시작 폼 | POST `/api/scheduler/trigger` |
+| 상태 새로고침 | 실시간 상태 업데이트 | GET `/api/scheduler/status` |
+| 자동 새로고침 | 수동 트리거 후 2초 후 자동 상태 갱신 | 자동 갱신 로직 |
+
+**API 응답 형식 (GET /api/scheduler/status)**:
+
+```json
+{
+  "enabled": true,
+  "running": true,
+  "redis": {
+    "host": "localhost",
+    "port": 6379,
+    "connected": true
+  },
+  "scheduled_jobs": [
+    {
+      "id": "daily_data_collection",
+      "name": "Daily Data Collection",
+      "trigger": "cron[hour='9', minute='0']",
+      "next_run": "2025-11-07T09:00:00+00:00"
+    }
+  ],
+  "last_run": {
+    "timestamp": "2025-11-06T09:00:00+00:00",
+    "success": true,
+    "message": "작업 추가됨 (Job ID: ...)",
+    "job_id": "abcd1234-efgh5678..."
+  },
+  "job_history": [
+    {
+      "timestamp": "2025-11-06T09:00:00+00:00",
+      "success": true,
+      "message": "작업 추가됨 (Job ID: ...)",
+      "job_id": "abcd1234-efgh5678..."
+    }
+  ],
+  "rq_queue": {
+    "size": 1,
+    "error": null
+  },
+  "configuration": {
+    "hour": 9,
+    "minute": 0,
+    "symbols": ["KRW-BTC", "KRW-ETH", "KRW-XRP"],
+    "timeframes": ["1H", "1D"]
+  }
+}
+```
+
+**API 응답 필드 설명**:
+
+- `timestamp`: ISO 8601 형식의 UTC 시간 (UI에서 자동으로 로컬 타임존 변환)
+- `success`: 작업 성공 여부 (true/false)
+- `message`: 사용자 친화적인 상태 메시지 (한국어)
+- `job_id`: Redis RQ 작업 ID (백그라운드 작업 추적용)
+
+#### 3. 페이지 통합 (`frontend/src/pages/DataManagementPage.jsx`)
+
+데이터 관리 페이지에 "⏰ 자동 수집" 탭 추가:
+
+```
+📊 데이터 조회 | 📤 파일 업로드 | ⏰ 자동 수집
+```
+
+### 사용 방법
+
+#### 1. 스케줄러 상태 확인
+
+1. 데이터 관리 페이지 접속
+2. "⏰ 자동 수집" 탭 클릭
+3. 상단의 상태 요약 확인:
+   - **활성화**: 자동 스케줄 실행 여부
+   - **실행 중**: 스케줄러 엔진 상태
+   - **Redis**: 연결 상태
+   - **큐 크기**: 처리 대기 중인 작업 수
+
+#### 2. 현재 설정 확인
+
+"현재 설정" 섹션에서:
+- 실행 시간 (UTC 기준, KST = UTC+9)
+- 수집 대상 심볼
+- 수집 타임프레임
+- 기본 수집 기간
+
+#### 3. 최근 실행 정보 확인
+
+"최근 실행 정보" 섹션에서:
+- 마지막 실행 시간
+- 실행 성공 여부
+- 결과 메시지
+
+작업 히스토리 테이블에서 최근 10개 작업의 상세 내역 확인 가능
+
+#### 4. 수동으로 데이터 수집 실행
+
+1. "수동으로 데이터 수집 실행" 폼 작성:
+   - **심볼**: 콤마(,)로 구분 (예: KRW-BTC,KRW-ETH)
+   - **타임프레임**: 콤마(,)로 구분 (예: 1H,1D)
+   - **수집 기간**: 1~365일 범위
+   - **기존 파일 덮어쓰기**: 선택 사항
+
+2. "🚀 지금 실행" 버튼 클릭
+
+3. 성공 메시지 확인 및 Job ID 기록
+
+4. "🔄 새로고침" 버튼으로 상태 갱신 (또는 2초 후 자동 갱신)
+
+### ENABLE_SCHEDULER 상태별 UI
+
+#### ENABLE_SCHEDULER=true (자동 모드)
+
+모든 기능 활성화:
+- 다음 실행 일정 표시
+- 현재 스케줄 설정 표시
+- 수동 트리거 폼 사용 가능
+
+#### ENABLE_SCHEDULER=false (수동 모드)
+
+제한된 기능:
+- ⚠️ "자동 스케줄러가 비활성화되어 있습니다" 경고 표시
+- 다음 실행 일정 표시 안 됨
+- 수동 트리거만 가능
+- 과거 작업 히스토리는 여전히 조회 가능
+
+### 시간대 변환
+
+모든 UTC 시간은 로컬 타임존으로 자동 변환됩니다:
+
+```
+UTC 09:00 = KST 18:00 (오후 6시)
+UTC 00:00 = KST 09:00 (아침 9시)
+```
+
+시간 값에 마우스를 올리면 원본 UTC 시간이 툴팁으로 표시됩니다.
+
+### API 포맷 호환성
+
+**중요**: UI는 새로운 API 응답 포맷뿐만 아니라 이전 포맷도 자동으로 지원합니다.
+
+- **새 포맷** (권장): `{ timestamp, success, message, job_id }`
+- **이전 포맷** (호환): `{ status, job_id, start_time, end_time, ... }`
+
+UI는 두 포맷 중 어떤 것을 받든 올바르게 렌더링하므로, API 업그레이드 중에도 사용자 경험이 손상되지 않습니다.
+
+### 트러블슈팅
+
+| 증상 | 원인 | 해결 방법 |
+|------|------|---------|
+| "스케줄러 상태를 조회할 수 없습니다" | Backend 서버 연결 실패 | Backend 서버 상태 확인 및 재시작 |
+| 수동 트리거 후 상태가 안 바뀜 | 자동 새로고침 실패 | "🔄 새로고침" 버튼으로 수동 갱신 |
+| 작업이 큐에 추가되지 않음 | Redis 연결 실패 | Redis 서버 상태 확인 |
+| 시간 표시가 잘못됨 | 브라우저 타임존 설정 | 브라우저의 시스템 타임존 설정 확인 |
+| 히스토리에 데이터가 보이지 않음 | API 포맷 변경 반영 필요 | Backend 재시작 또는 캐시 제거 |
+
+---
+
+## 모니터링 및 문제 해결
+
+### 1. Worker 로그 확인
+
+```bash
+# 실시간 로그 모니터링
+rq info -i 1
+
+# 특정 큐 확인
+rq info -i 1 data_ingestion
+
+# 작업 상세 조회
+rq info data_ingestion
+```
+
+### 2. Redis 상태 확인
+
+```bash
+# 큐 크기
+redis-cli LLEN rq:queue:data_ingestion
+
+# 처리 중인 작업
+redis-cli HLEN rq:workers
+
+# 모든 키 조회
+redis-cli KEYS 'rq:*'
+```
+
+### 3. 데이터 파일 확인
+
+```bash
+# 저장된 파일 목록
+find data -name "*.parquet" -type f -ls
+
+# 파일 검증
+source venv/bin/activate
+python scripts/inspect_parquet.py --path data/KRW-BTC/1H/2025.parquet --verbose
+```
+
+### 4. 일반 문제 해결
+
+| 문제 | 원인 | 해결 |
+|------|------|------|
+| Permission denied `/data` | 디렉토리 권한 부족 | `chmod 777 $DATA_ROOT` |
+| Worker timeout | 작업 시간 초과 | Redis TTL 증가 또는 작업 분할 |
+| Parquet 검증 실패 | 파일 손상 | 다시 수집하거나 `--overwrite` 사용 |
+| Rate limit 오류 | API 요청 초과 | Worker 수 감소 또는 스케줄 조정 |
+
+---
+
+## 프로덕션 배포
+
+### 1. Docker 기반 배포
+
+```bash
+# 1. 이미지 빌드
+docker-compose build
+
+# 2. 서비스 시작
+docker-compose up -d postgres redis backend
+
+# 3. Worker 시작
+docker-compose --profile worker up -d worker
+
+# 4. 상태 확인
+docker-compose ps
+```
+
+### 2. 환경 변수 설정
+
+```bash
+# .env 파일
+DATA_ROOT=/data
+REDIS_HOST=redis
+REDIS_PORT=6379
+DATABASE_URL=postgresql://user:password@postgres:5432/db
+TZ=Asia/Seoul
+```
+
+### 3. Systemd 서비스 (Linux)
+
+```bash
+# /etc/systemd/system/rq-worker.service
+[Unit]
+Description=RQ Worker for Data Ingestion
+After=redis.service
+
+[Service]
+Type=simple
+User=app
+WorkingDirectory=/opt/coin-backtesting
+Environment="VIRTUAL_ENV=/opt/coin-backtesting/venv"
+Environment="PATH=/opt/coin-backtesting/venv/bin"
+Environment="DATA_ROOT=/data"
+ExecStart=/opt/coin-backtesting/venv/bin/rq worker data_ingestion
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 4. 모니터링 (선택)
+
+```bash
+# Supervisor 예제
+[program:rq_worker]
+command=/path/to/venv/bin/rq worker data_ingestion
+directory=/path/to/project
+user=app
+autostart=true
+autorestart=true
+startsecs=10
+stopwaitsecs=600
+```
+
+---
+
+## 체크리스트
+
+### 개발 환경 (로컬 테스트)
+- [ ] Redis 실행 중
+- [ ] Backend 실행 중 (ENABLE_SCHEDULER=true 권장)
+- [ ] Worker 실행 중 (선택, 수동 테스트 시)
+- [ ] Parquet 파일 생성 확인
+- [ ] 스케줄러 상태 정상 (GET /api/scheduler/status)
+- [ ] 수동 트리거 테스트 (POST /api/scheduler/trigger)
+
+### 스테이징/프로덕션
+- [ ] Docker 이미지 빌드 완료
+- [ ] 환경 변수 설정 (.env 파일)
+  - [ ] ENABLE_SCHEDULER 값 확인
+  - [ ] SCHEDULER_HOUR/MINUTE 타임존 확인 (UTC 기준)
+  - [ ] SCHEDULER_SYMBOLS, SCHEDULER_TIMEFRAMES 설정
+  - [ ] REDIS_HOST/PORT 확인
+- [ ] Redis 백업 정책 수립
+- [ ] RQ Worker 모니터링 설정
+- [ ] verify_scheduler.py 정기 실행 (cron)
+- [ ] 모니터링/알림 구성
+- [ ] 재해 복구 계획 수립
+
+### ENABLE_SCHEDULER 설정별 체크사항
+
+**자동 모드 (ENABLE_SCHEDULER=true)**
+- [ ] BackgroundScheduler 초기화 확인 (로그)
+- [ ] 스케줄된 작업 확인 (GET /api/scheduler/status)
+- [ ] next_run_time이 올바르게 설정되었는지 확인
+- [ ] 지정된 시간에 자동 실행 확인 (RQ 큐 모니터링)
+
+**수동 모드 (ENABLE_SCHEDULER=false)**
+- [ ] 스케줄러 비활성화 로그 확인
+- [ ] GET /api/scheduler/status에서 "disabled" 메시지 확인
+- [ ] POST /api/scheduler/trigger로 수동 실행 가능 확인
+- [ ] 메모리/CPU 사용량이 감소했는지 확인
+
+---
+
+## 다음 단계 (Step 4)
+
+### CI/CD 파이프라인 구축
+```yaml
+# GitHub Actions 예제
+name: Test & Deploy
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+      postgres:
+        image: postgres:15-alpine
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run offline tests
+        run: python scripts/test_rq_job.py --offline
+      - name: Run unit tests
+        run: pytest tests/ -v
+```
+
+---
+
+## 지원 및 문의
+
+- 로그 위치: `/var/log/coin-backtesting/`
+- Redis 모니터링: `redis-cli monitor`
+- RQ 웹 UI: `rq-dashboard` (선택)
+
+**결론**: 모든 자동 데이터 수집 파이프라인이 준비되어 있으며, Step 1-3이 완료되었습니다. 프로덕션 배포는 팀의 인프라 환경에 맞춰 조정하면 됩니다.

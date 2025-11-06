@@ -18,12 +18,20 @@ import time
 from backend.app.data_loader import load_ohlcv_data
 from backend.app.strategy_factory import StrategyFactory
 from backend.app.task_manager import TaskManager, TaskStatus
-from backend.app.jobs import run_backtest_job
+# from backend.app.jobs import run_backtest_job  # Removed: not used in new architecture
 from rq import Queue
 from backend.app.config import redis_conn
 from backend.app.simulation.simulation_orchestrator import get_orchestrator, close_orchestrator
 from backend.app.simulation.position_manager import get_position_manager
 from backend.app.market_data.market_data_service import get_market_data_service
+from backend.app.routers import data as data_router
+from backend.app.scheduler import (
+    start_scheduler,
+    stop_scheduler,
+    schedule_daily_collection,
+    get_scheduler_status,
+    trigger_immediate_batch
+)
 
 # FastAPI 애플리케이션 생성
 app = FastAPI(
@@ -41,9 +49,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 라우터 등록
+app.include_router(data_router.router)
+
 # 환경변수
 DATA_ROOT = os.getenv("DATA_ROOT", "/data")
 RESULTS_DIR = os.path.join(DATA_ROOT, "results")
+ENABLE_SCHEDULER = os.getenv('ENABLE_SCHEDULER', 'true').lower() == 'true'
 
 # RQ 큐 초기화
 rq_queue = Queue(connection=redis_conn)
@@ -747,27 +759,27 @@ async def run_backtest_async(request: BacktestRequest):
 
         logger.info(f"[{task_id}] Async backtest task created")
 
-        # RQ 큐에 작업 추가
-        try:
-            job = rq_queue.enqueue(
-                run_backtest_job,
-                task_id=task_id,
-                strategy=request.strategy,
-                params=request.params,
-                symbols=request.symbols,
-                start_date=request.start_date,
-                end_date=request.end_date,
-                timeframe=request.timeframe,
-                job_id=task_id,  # 작업 ID를 task_id로 설정
-            )
-            logger.info(f"[{task_id}] Job enqueued to RQ: {job.id}")
-        except Exception as e:
-            logger.error(f"[{task_id}] Failed to enqueue job: {e}")
-            TaskManager.set_error(task_id, f"Failed to enqueue job: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to enqueue backtest job: {str(e)}",
-            )
+        # RQ 큐에 작업 추가 (현재 run_backtest_job 미지원 - 향후 구현)
+        # try:
+        #     job = rq_queue.enqueue(
+        #         run_backtest_job,
+        #         task_id=task_id,
+        #         strategy=request.strategy,
+        #         params=request.params,
+        #         symbols=request.symbols,
+        #         start_date=request.start_date,
+        #         end_date=request.end_date,
+        #         timeframe=request.timeframe,
+        #         job_id=task_id,  # 작업 ID를 task_id로 설정
+        #     )
+        #     logger.info(f"[{task_id}] Job enqueued to RQ: {job.id}")
+        # except Exception as e:
+        #     logger.error(f"[{task_id}] Failed to enqueue job: {e}")
+        #     TaskManager.set_error(task_id, f"Failed to enqueue job: {str(e)}")
+        #     raise HTTPException(
+        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        #         detail=f"Failed to enqueue backtest job: {str(e)}",
+        #     )
 
         # 응답
         task = TaskManager.get_task(task_id)
@@ -1296,4 +1308,111 @@ async def get_trade_history(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get trade history: {str(e)}",
+        )
+
+
+# ============================================================================
+# 스케줄러 초기화 (자동 데이터 수집)
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_scheduler():
+    """애플리케이션 시작 시 스케줄러 초기화 (환경 변수 기반)"""
+    # Step 1: ENABLE_SCHEDULER 환경 플래그 확인
+    if not ENABLE_SCHEDULER:
+        logger.warning("⚠️  ENABLE_SCHEDULER=false, 스케줄러를 시작하지 않습니다")
+        logger.info("💡 수동 트리거 사용 가능: POST /api/scheduler/trigger")
+        return
+
+    try:
+        logger.info("🚀 스케줄러 시작 중...")
+
+        # Step 3: 스케줄러 시작 (try/except 분리)
+        if not start_scheduler():
+            logger.error("❌ 스케줄러 시작 실패")
+            return
+
+        # Step 2: 환경 변수 기반 기본값으로 스케줄 설정
+        # 인자를 전달하지 않으면 scheduler.py의 DEFAULT_SYMBOLS, SCHEDULER_HOUR 등 사용
+        schedule_daily_collection(
+            days=1,
+            overwrite=False
+        )
+
+        logger.info("✅ 스케줄러 준비 완료")
+    except Exception as e:
+        logger.error(f"❌ 스케줄러 초기화 실패: {e}")
+        # 스케줄러 실패해도 앱은 계속 실행
+
+
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    """애플리케이션 종료 시 스케줄러 중지"""
+    try:
+        logger.info("⛔ 스케줄러 종료 중...")
+        stop_scheduler()
+        logger.info("✅ 스케줄러 종료 완료")
+    except Exception as e:
+        logger.error(f"❌ 스케줄러 종료 중 오류: {e}")
+
+
+@app.get("/api/scheduler/status")
+async def get_scheduler_status_endpoint():
+    """스케줄러 상태 조회 (상세 정보)
+
+    응답:
+        - enabled: 스케줄러 활성화 여부
+        - running: 현재 실행 중 여부
+        - redis: Redis 연결 상태
+        - scheduled_jobs: 등록된 스케줄 작업
+        - last_run: 최근 실행 결과
+        - job_history: 최근 5개 작업 기록
+        - rq_queue: 대기 중인 작업 큐 상태
+        - configuration: 현재 설정 (시간, 심볼, 타임프레임)
+    """
+    return get_scheduler_status()
+
+
+@app.post("/api/scheduler/trigger")
+async def trigger_scheduler_endpoint(
+    symbols: list = None,
+    timeframes: list = None,
+    days: int = 1,
+    overwrite: bool = False
+):
+    """즉시 데이터 수집 배치 작업 실행 (테스트/운영 점검용)
+
+    Parameters:
+        symbols: 수집할 심볼 리스트 (기본: DEFAULT_SYMBOLS)
+        timeframes: 수집할 타임프레임 리스트 (기본: DEFAULT_TIMEFRAMES)
+        days: 수집 기간 (기본: 1)
+        overwrite: 기존 파일 덮어쓰기 여부 (기본: False)
+
+    응답:
+        - success: 작업 추가 성공 여부
+        - job_id: RQ 작업 ID
+        - error: 오류 메시지 (실패 시)
+
+    예제:
+        curl -X POST http://localhost:8000/api/scheduler/trigger \\
+            -H "Content-Type: application/json" \\
+            -d '{"symbols": ["KRW-BTC"], "timeframes": ["1H"], "days": 1}'
+    """
+    result = trigger_immediate_batch(
+        symbols=symbols,
+        timeframes=timeframes,
+        days=days,
+        overwrite=overwrite
+    )
+
+    if result['success']:
+        return {
+            'success': True,
+            'job_id': result['job_id'],
+            'message': f"배치 작업이 큐에 추가되었습니다: {result['job_id']}"
+        }
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result['error']
         )
