@@ -203,31 +203,56 @@ export ENABLE_SCHEDULER=false
 
 ### 구성 요소
 
-#### 1. 스케줄러 모듈 (`backend/app/scheduler.py`)
+#### 1. 환경 변수 기반 스케줄러 설정
+
+모든 스케줄링 설정은 **환경 변수**를 통해 동적으로 제어됩니다:
+
+```bash
+# .env 또는 시스템 환경 변수로 설정
+ENABLE_SCHEDULER=true                          # 자동 스케줄링 활성화
+SCHEDULER_HOUR=9                               # 실행 시간 (UTC, 0-23)
+SCHEDULER_MINUTE=0                             # 실행 분 (0-59)
+SCHEDULER_SYMBOLS=KRW-BTC,KRW-ETH,KRW-XRP     # 수집 심볼 (콤마 구분)
+SCHEDULER_TIMEFRAMES=1H,1D                     # 수집 타임프레임 (콤마 구분)
+```
+
+**Python 코드에서의 활용**:
 
 ```python
+from backend.app.scheduler import schedule_daily_collection
+
+# 환경 변수에서 자동으로 설정됨
+# 필요시 명시적 파라미터로 오버라이드 가능
 schedule_daily_collection(
-    symbols=['KRW-BTC', 'KRW-ETH', 'KRW-XRP'],
-    timeframes=['1H', '1D'],
-    hour=9,  # UTC (KST 18:00)
-    minute=0,
-    days=1,
-    overwrite=False
+    # symbols, timeframes, hour, minute은 생략하면 환경 변수 사용
+    days=1,          # 수집 기간: 최근 1일
+    overwrite=False  # 기존 파일 덮어쓰기 안 함
 )
 ```
 
 **시간대 변환**:
 - UTC 09:00 = KST 18:00 (오후 6시)
-- 필요시 다른 시간으로 변경 가능
+- SCHEDULER_HOUR를 변경하여 다른 시간으로 설정 가능
 
 #### 2. FastAPI 통합 (`backend/app/main.py`)
 
 ```python
 @app.on_event("startup")
 async def startup_scheduler():
-    """앱 시작 시 스케줄러 초기화"""
-    start_scheduler()
-    schedule_daily_collection(...)
+    """앱 시작 시 스케줄러 초기화 (ENABLE_SCHEDULER=true일 때만)"""
+    if not ENABLE_SCHEDULER:
+        logger.warning("ENABLE_SCHEDULER=false, 스케줄러를 시작하지 않습니다")
+        return
+
+    if not start_scheduler():
+        logger.error("스케줄러 시작 실패")
+        return
+
+    # 환경 변수 기반 기본값으로 스케줄 설정
+    schedule_daily_collection(
+        days=1,
+        overwrite=False
+    )
 
 @app.on_event("shutdown")
 async def shutdown_scheduler():
@@ -273,6 +298,189 @@ curl http://localhost:8000/api/scheduler/status
   ]
 }
 ```
+
+---
+
+## Step 4: 프론트엔드 UI 통합
+
+### 개요
+
+자동 데이터 수집 스케줄러의 상태 모니터링 및 수동 실행을 위한 웹 기반 UI를 제공합니다.
+
+### 구성 요소
+
+#### 1. API 서비스 레이어 (`frontend/src/services/schedulerApi.js`)
+
+- `getSchedulerStatus()`: 스케줄러 상태 조회
+- `triggerScheduler()`: 수동 트리거 실행
+- `convertUtcToLocal()`: UTC → 로컬 타임존 변환
+- `formatErrorMessage()`: 사용자 친화적인 에러 메시지
+
+#### 2. UI 컴포넌트 (`frontend/src/components/SchedulerPanel.jsx`)
+
+**주요 기능:**
+
+| 기능 | 설명 | API 필드 |
+|------|------|----------|
+| 스케줄러 상태 표시 | 활성화, 실행 중, Redis 연결, 큐 크기 | `enabled`, `running`, `redis`, `rq_queue` |
+| 다음 실행 일정 | APScheduler 기반 스케줄 정보 표시 | `scheduled_jobs[].next_run` |
+| 현재 설정 조회 | 실행 시간, 심볼, 타임프레임, 수집 기간 | `configuration.*` |
+| 최근 실행 정보 | 마지막 실행 결과 및 상태 | `last_run.timestamp`, `last_run.success`, `last_run.message` |
+| 작업 히스토리 | 최근 10개 작업의 상세 정보 | `job_history[]` (timestamp, success, message, job_id) |
+| 수동 트리거 | 즉시 데이터 수집 시작 폼 | POST `/api/scheduler/trigger` |
+| 상태 새로고침 | 실시간 상태 업데이트 | GET `/api/scheduler/status` |
+| 자동 새로고침 | 수동 트리거 후 2초 후 자동 상태 갱신 | 자동 갱신 로직 |
+
+**API 응답 형식 (GET /api/scheduler/status)**:
+
+```json
+{
+  "enabled": true,
+  "running": true,
+  "redis": {
+    "host": "localhost",
+    "port": 6379,
+    "connected": true
+  },
+  "scheduled_jobs": [
+    {
+      "id": "daily_data_collection",
+      "name": "Daily Data Collection",
+      "trigger": "cron[hour='9', minute='0']",
+      "next_run": "2025-11-07T09:00:00+00:00"
+    }
+  ],
+  "last_run": {
+    "timestamp": "2025-11-06T09:00:00+00:00",
+    "success": true,
+    "message": "작업 추가됨 (Job ID: ...)",
+    "job_id": "abcd1234-efgh5678..."
+  },
+  "job_history": [
+    {
+      "timestamp": "2025-11-06T09:00:00+00:00",
+      "success": true,
+      "message": "작업 추가됨 (Job ID: ...)",
+      "job_id": "abcd1234-efgh5678..."
+    }
+  ],
+  "rq_queue": {
+    "size": 1,
+    "error": null
+  },
+  "configuration": {
+    "hour": 9,
+    "minute": 0,
+    "symbols": ["KRW-BTC", "KRW-ETH", "KRW-XRP"],
+    "timeframes": ["1H", "1D"]
+  }
+}
+```
+
+**API 응답 필드 설명**:
+
+- `timestamp`: ISO 8601 형식의 UTC 시간 (UI에서 자동으로 로컬 타임존 변환)
+- `success`: 작업 성공 여부 (true/false)
+- `message`: 사용자 친화적인 상태 메시지 (한국어)
+- `job_id`: Redis RQ 작업 ID (백그라운드 작업 추적용)
+
+#### 3. 페이지 통합 (`frontend/src/pages/DataManagementPage.jsx`)
+
+데이터 관리 페이지에 "⏰ 자동 수집" 탭 추가:
+
+```
+📊 데이터 조회 | 📤 파일 업로드 | ⏰ 자동 수집
+```
+
+### 사용 방법
+
+#### 1. 스케줄러 상태 확인
+
+1. 데이터 관리 페이지 접속
+2. "⏰ 자동 수집" 탭 클릭
+3. 상단의 상태 요약 확인:
+   - **활성화**: 자동 스케줄 실행 여부
+   - **실행 중**: 스케줄러 엔진 상태
+   - **Redis**: 연결 상태
+   - **큐 크기**: 처리 대기 중인 작업 수
+
+#### 2. 현재 설정 확인
+
+"현재 설정" 섹션에서:
+- 실행 시간 (UTC 기준, KST = UTC+9)
+- 수집 대상 심볼
+- 수집 타임프레임
+- 기본 수집 기간
+
+#### 3. 최근 실행 정보 확인
+
+"최근 실행 정보" 섹션에서:
+- 마지막 실행 시간
+- 실행 성공 여부
+- 결과 메시지
+
+작업 히스토리 테이블에서 최근 10개 작업의 상세 내역 확인 가능
+
+#### 4. 수동으로 데이터 수집 실행
+
+1. "수동으로 데이터 수집 실행" 폼 작성:
+   - **심볼**: 콤마(,)로 구분 (예: KRW-BTC,KRW-ETH)
+   - **타임프레임**: 콤마(,)로 구분 (예: 1H,1D)
+   - **수집 기간**: 1~365일 범위
+   - **기존 파일 덮어쓰기**: 선택 사항
+
+2. "🚀 지금 실행" 버튼 클릭
+
+3. 성공 메시지 확인 및 Job ID 기록
+
+4. "🔄 새로고침" 버튼으로 상태 갱신 (또는 2초 후 자동 갱신)
+
+### ENABLE_SCHEDULER 상태별 UI
+
+#### ENABLE_SCHEDULER=true (자동 모드)
+
+모든 기능 활성화:
+- 다음 실행 일정 표시
+- 현재 스케줄 설정 표시
+- 수동 트리거 폼 사용 가능
+
+#### ENABLE_SCHEDULER=false (수동 모드)
+
+제한된 기능:
+- ⚠️ "자동 스케줄러가 비활성화되어 있습니다" 경고 표시
+- 다음 실행 일정 표시 안 됨
+- 수동 트리거만 가능
+- 과거 작업 히스토리는 여전히 조회 가능
+
+### 시간대 변환
+
+모든 UTC 시간은 로컬 타임존으로 자동 변환됩니다:
+
+```
+UTC 09:00 = KST 18:00 (오후 6시)
+UTC 00:00 = KST 09:00 (아침 9시)
+```
+
+시간 값에 마우스를 올리면 원본 UTC 시간이 툴팁으로 표시됩니다.
+
+### API 포맷 호환성
+
+**중요**: UI는 새로운 API 응답 포맷뿐만 아니라 이전 포맷도 자동으로 지원합니다.
+
+- **새 포맷** (권장): `{ timestamp, success, message, job_id }`
+- **이전 포맷** (호환): `{ status, job_id, start_time, end_time, ... }`
+
+UI는 두 포맷 중 어떤 것을 받든 올바르게 렌더링하므로, API 업그레이드 중에도 사용자 경험이 손상되지 않습니다.
+
+### 트러블슈팅
+
+| 증상 | 원인 | 해결 방법 |
+|------|------|---------|
+| "스케줄러 상태를 조회할 수 없습니다" | Backend 서버 연결 실패 | Backend 서버 상태 확인 및 재시작 |
+| 수동 트리거 후 상태가 안 바뀜 | 자동 새로고침 실패 | "🔄 새로고침" 버튼으로 수동 갱신 |
+| 작업이 큐에 추가되지 않음 | Redis 연결 실패 | Redis 서버 상태 확인 |
+| 시간 표시가 잘못됨 | 브라우저 타임존 설정 | 브라우저의 시스템 타임존 설정 확인 |
+| 히스토리에 데이터가 보이지 않음 | API 포맷 변경 반영 필요 | Backend 재시작 또는 캐시 제거 |
 
 ---
 

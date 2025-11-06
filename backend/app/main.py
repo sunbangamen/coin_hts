@@ -18,7 +18,7 @@ import time
 from backend.app.data_loader import load_ohlcv_data
 from backend.app.strategy_factory import StrategyFactory
 from backend.app.task_manager import TaskManager, TaskStatus
-from backend.app.jobs import run_backtest_job
+# from backend.app.jobs import run_backtest_job  # Removed: not used in new architecture
 from rq import Queue
 from backend.app.config import redis_conn
 from backend.app.simulation.simulation_orchestrator import get_orchestrator, close_orchestrator
@@ -759,27 +759,27 @@ async def run_backtest_async(request: BacktestRequest):
 
         logger.info(f"[{task_id}] Async backtest task created")
 
-        # RQ 큐에 작업 추가
-        try:
-            job = rq_queue.enqueue(
-                run_backtest_job,
-                task_id=task_id,
-                strategy=request.strategy,
-                params=request.params,
-                symbols=request.symbols,
-                start_date=request.start_date,
-                end_date=request.end_date,
-                timeframe=request.timeframe,
-                job_id=task_id,  # 작업 ID를 task_id로 설정
-            )
-            logger.info(f"[{task_id}] Job enqueued to RQ: {job.id}")
-        except Exception as e:
-            logger.error(f"[{task_id}] Failed to enqueue job: {e}")
-            TaskManager.set_error(task_id, f"Failed to enqueue job: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to enqueue backtest job: {str(e)}",
-            )
+        # RQ 큐에 작업 추가 (현재 run_backtest_job 미지원 - 향후 구현)
+        # try:
+        #     job = rq_queue.enqueue(
+        #         run_backtest_job,
+        #         task_id=task_id,
+        #         strategy=request.strategy,
+        #         params=request.params,
+        #         symbols=request.symbols,
+        #         start_date=request.start_date,
+        #         end_date=request.end_date,
+        #         timeframe=request.timeframe,
+        #         job_id=task_id,  # 작업 ID를 task_id로 설정
+        #     )
+        #     logger.info(f"[{task_id}] Job enqueued to RQ: {job.id}")
+        # except Exception as e:
+        #     logger.error(f"[{task_id}] Failed to enqueue job: {e}")
+        #     TaskManager.set_error(task_id, f"Failed to enqueue job: {str(e)}")
+        #     raise HTTPException(
+        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        #         detail=f"Failed to enqueue backtest job: {str(e)}",
+        #     )
 
         # 응답
         task = TaskManager.get_task(task_id)

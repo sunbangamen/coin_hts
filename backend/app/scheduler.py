@@ -43,6 +43,44 @@ last_run_time = None    # 마지막 실행 시간
 job_history = []        # 작업 실행 기록 (최근 10개)
 
 
+def format_job_result_for_ui(result: dict, timestamp: datetime = None) -> dict:
+    """
+    내부 result 포맷을 UI 포맷으로 변환
+
+    UI 포맷: { timestamp, success, message, job_id }
+    """
+    if not result:
+        return {
+            'timestamp': timestamp.isoformat() if timestamp else None,
+            'success': False,
+            'message': '작업 정보 없음',
+            'job_id': None
+        }
+
+    timestamp_str = timestamp.isoformat() if timestamp else result.get('start_time')
+    status = result.get('status', 'unknown')
+    job_id = result.get('job_id')
+
+    # status를 success boolean으로 변환
+    if status == 'queued':
+        success = True
+        message = f"작업 추가됨 (Job ID: {job_id})" if job_id else "작업이 큐에 추가되었습니다"
+    elif status == 'failed':
+        success = False
+        error = result.get('error', '작업 실패')
+        message = f"작업 실패: {error}"
+    else:
+        success = False
+        message = f"알 수 없는 상태: {status}"
+
+    return {
+        'timestamp': timestamp_str,
+        'success': success,
+        'message': message,
+        'job_id': job_id
+    }
+
+
 def init_scheduler():
     """스케줄러 초기화"""
     global scheduler, redis_conn
@@ -296,6 +334,12 @@ def get_scheduler_status():
 
     # Step 4: ENABLE_SCHEDULER=false일 때 disabled 상태 반환
     if not ENABLE_SCHEDULER:
+        # 과거 작업 히스토리는 여전히 표시 (UI 포맷으로 변환)
+        formatted_history = [
+            format_job_result_for_ui(job, datetime.fromisoformat(job.get('start_time')))
+            for job in job_history[-10:]
+        ] if job_history else []
+
         return {
             'enabled': False,
             'running': False,
@@ -307,11 +351,8 @@ def get_scheduler_status():
                 'connected': False
             },
             'scheduled_jobs': [],
-            'last_run': {
-                'time': None,
-                'result': None
-            },
-            'job_history': [],
+            'last_run': format_job_result_for_ui(last_run_result, last_run_time),
+            'job_history': formatted_history,
             'rq_queue': {
                 'size': 0,
                 'error': None
@@ -324,6 +365,16 @@ def get_scheduler_status():
             }
         }
 
+    # job_history를 UI 포맷으로 변환 (최근 10개)
+    formatted_history = []
+    for job in job_history[-10:]:
+        try:
+            timestamp = datetime.fromisoformat(job.get('start_time')) if job.get('start_time') else None
+            formatted_history.append(format_job_result_for_ui(job, timestamp))
+        except (ValueError, TypeError):
+            # 파싱 실패 시 raw data 사용
+            formatted_history.append(format_job_result_for_ui(job))
+
     status = {
         'enabled': ENABLE_SCHEDULER,
         'running': scheduler.running if scheduler else False,
@@ -333,11 +384,8 @@ def get_scheduler_status():
             'connected': False
         },
         'scheduled_jobs': [],
-        'last_run': {
-            'time': last_run_time.isoformat() if last_run_time else None,
-            'result': last_run_result
-        },
-        'job_history': job_history[-5:],  # 최근 5개만
+        'last_run': format_job_result_for_ui(last_run_result, last_run_time),
+        'job_history': formatted_history,
         'rq_queue': {
             'size': 0,
             'error': None

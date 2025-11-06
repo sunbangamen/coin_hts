@@ -214,3 +214,143 @@ def _save_uploaded_file(...):
 ---
 
 **결론**: 이슈 #19는 모든 단위 테스트 및 E2E 테스트를 통과하여 **프로덕션 준비 상태**입니다.
+
+---
+
+## 🧪 오프라인 QA 시나리오
+
+### 목적
+네트워크 미연결 환경에서 RQ 파이프라인(Upbit API 연동, Parquet 저장/검증)을 테스트하고, 실제 환경과 분리된 테스트 데이터로 안전하게 검증
+
+### 오프라인 모드 실행
+
+**명령어**:
+```bash
+# 기본 오프라인 모드 (OFFLINE_KRW-BTC 심볼로 저장)
+python scripts/test_rq_job.py --offline
+
+# 커스텀 prefix 지정
+python scripts/test_rq_job.py --offline --offline-prefix TEST
+python scripts/test_rq_job.py --offline --offline-prefix SANDBOX
+```
+
+### 테스트 결과 (2025-11-06 실행)
+
+**오프라인 모드 + TEST prefix 테스트**:
+
+```
+RQ Job 테스트 시작 [오프라인 모드]
+============================================================
+ℹ️  오프라인 모드: Redis 미연결
+📝 파일 저장 심볼 prefix: TEST
+
+1️⃣  작업 큐 추가 테스트
+  ⊘ 오프라인 모드: 큐 테스트 스킵
+
+2️⃣  직접 함수 호출 테스트 (동기)
+  ⊙ 오프라인 모드: 모의 캔들 데이터 생성 중...
+  ✓ 24개 모의 캔들 생성 완료
+  ✓ 오프라인 데이터 저장 성공
+  저장 파일: /home/limeking/projects/worktree/coin-19/data/TEST_KRW-BTC/1H/2025.parquet
+  행 수: 24
+
+3️⃣  배치 작업 테스트
+  ⊘ 오프라인 모드: 배치 작업 테스트 스킵
+
+4️⃣  데이터 저장 경로 확인 및 검증
+  ✓ Parquet 파일 확인
+  경로: /home/limeking/projects/worktree/coin-19/data/TEST_KRW-BTC/1H/2025.parquet
+  행 수: 24
+  타임스탬프 범위: 2025-11-05 06:45:59 ~ 2025-11-06 05:45:59
+
+📊 inspect_parquet.py로 상세 검증 중...
+  ✓ Parquet 검증 완료
+```
+
+**검증 결과**:
+
+| 항목 | 결과 | 설명 |
+|---|---|---|
+| 모의 캔들 생성 | ✅ PASS | 24개 캔들 정상 생성 |
+| Parquet 저장 | ✅ PASS | TEST_KRW-BTC/1H/2025.parquet 저장 |
+| 파일 경로 | ✅ PASS | prefix 분리로 실데이터와 안전하게 구분 |
+| 자동 검증 | ✅ PASS | inspect_parquet.py 자동 실행 및 통계 출력 |
+| 데이터 무결성 | ✅ PASS | 결측치 없음, 타임스탬프 범위 정상 |
+
+**파일 크기 및 통계**:
+```
+📁 기본 정보:
+  파일 크기: 5,221 bytes (0.00 MB)
+  행(Row) 수: 24
+  컬럼(Column): timestamp, open, high, low, close, volume
+
+⏰ 시간 범위:
+  최소: 2025-11-05 06:45:59.921351+00:00
+  최대: 2025-11-06 05:45:59.921351+00:00
+
+📈 주요 통계 (샘플):
+  open: 143,024,266.06 ~ 160,361,368.61 (평균: 151,444,030.94)
+  volume: 105.51 ~ 446.94 (평균: 260.17)
+
+✅ 결측치 없음
+```
+
+### 오프라인 vs 정상 모드 비교
+
+| 기능 | 오프라인 모드 | 정상 모드 |
+|---|---|---|
+| **Redis 연결** | ❌ 스킵 | ✅ 필수 |
+| **Upbit API 호출** | ❌ 모의 데이터 사용 | ✅ 실제 데이터 수집 |
+| **RQ 큐 테스트** | ❌ 스킵 (Redis 없음) | ✅ 작동 |
+| **Parquet 저장** | ✅ 작동 | ✅ 작동 |
+| **검증 (inspect)** | ✅ 자동 실행 | ✅ 자동 실행 |
+| **네트워크 요구** | ❌ 불필요 | ✅ 필수 |
+| **실행 시간** | ~1초 | ~5초 |
+
+### 사용 시나리오
+
+**개발 환경**:
+```bash
+# 빠른 검증 (네트워크 미연결)
+python scripts/test_rq_job.py --offline
+```
+
+**QA/테스트 환경**:
+```bash
+# 격리된 테스트 환경 (기존 데이터 보호)
+python scripts/test_rq_job.py --offline --offline-prefix SANDBOX_QA
+```
+
+**운영 환경**:
+```bash
+# 실제 데이터 수집 (Redis + API 필수)
+python scripts/test_rq_job.py  # --offline 없음
+```
+
+### 검증 방법
+
+1. **Parquet 파일 검증**:
+```bash
+python scripts/inspect_parquet.py --path data/TEST_KRW-BTC/1H/2025.parquet --verbose
+```
+
+2. **파일 존재 확인**:
+```bash
+ls -lh data/TEST_KRW-BTC/1H/2025.parquet
+```
+
+3. **데이터 내용 확인** (Python):
+```python
+import pandas as pd
+df = pd.read_parquet('data/TEST_KRW-BTC/1H/2025.parquet')
+print(df.head())
+print(df.describe())
+```
+
+### 장점
+
+✅ **네트워크 독립적**: WiFi/네트워크 없어도 테스트 가능
+✅ **빠른 피드백**: API 호출 대기 시간 없이 ~1초 내 검증
+✅ **데이터 안전**: prefix로 실데이터와 완전히 분리
+✅ **자동 검증**: inspect_parquet.py 자동 호출로 데이터 무결성 확인
+✅ **재현성**: 동일한 모의 데이터로 반복 테스트 가능

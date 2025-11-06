@@ -9,7 +9,7 @@ Data Management API Router
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status
 from pydantic import BaseModel, Field
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 from datetime import datetime
 import os
 import logging
@@ -17,10 +17,19 @@ from pathlib import Path
 import re
 import tempfile
 import shutil
+import json
 try:
     import pyarrow.parquet as pq
 except ImportError:
     pq = None
+
+# Redis 및 RQ import (옵션)
+try:
+    from redis import Redis
+    from rq import Queue
+    HAS_RQ = True
+except ImportError:
+    HAS_RQ = False
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +66,34 @@ class UploadResponse(BaseModel):
     success: bool = Field(..., description="업로드 성공 여부")
     message: str = Field(..., description="응답 메시지")
     file_path: Optional[str] = Field(None, description="저장된 상대 경로")
+
+
+class DataRefreshRequest(BaseModel):
+    """데이터 자동 갱신 요청"""
+    symbols: Optional[List[str]] = Field(
+        None,
+        description="심볼 리스트 (예: ['KRW-BTC', 'KRW-ETH']). None이면 기본값 사용"
+    )
+    timeframes: Optional[List[str]] = Field(
+        None,
+        description="타임프레임 리스트 (예: ['1H', '1D']). None이면 기본값 사용"
+    )
+    days: int = Field(7, description="수집 기간 (최근 N일), 기본값: 7")
+    overwrite: bool = Field(True, description="기존 파일 덮어쓰기 여부, 기본값: True")
+    run_now: bool = Field(
+        False,
+        description="즉시 실행할지 큐에 넣을지 여부. True면 동기 실행, False면 RQ 비동기"
+    )
+
+
+class DataRefreshResponse(BaseModel):
+    """데이터 자동 갱신 응답"""
+    success: bool = Field(..., description="요청 성공 여부")
+    message: str = Field(..., description="응답 메시지")
+    job_id: Optional[str] = Field(None, description="RQ 작업 ID (비동기 실행 시)")
+    status: str = Field(..., description="상태 (queued, running, completed, failed)")
+    details: Optional[Dict] = Field(None, description="실행 결과 상세 정보")
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat(), description="응답 시간")
 
 
 # ============================================================================
@@ -501,4 +538,125 @@ async def upload_file(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"파일 업로드 중 오류 발생: {str(e)}",
+        )
+
+
+@router.post("/refresh", response_model=DataRefreshResponse)
+async def refresh_data(request: DataRefreshRequest):
+    """
+    데이터 자동 갱신 (Upbit 실시간 데이터 수집)
+
+    RQ를 통한 비동기 작업으로 Upbit에서 실시간 캔들 데이터를 수집합니다.
+
+    Request body:
+    ```json
+    {
+        "symbols": ["KRW-BTC", "KRW-ETH"],  // 선택 사항, 기본값 사용 가능
+        "timeframes": ["1H", "1D"],         // 선택 사항, 기본값 사용 가능
+        "days": 7,                          // 최근 N일 데이터
+        "overwrite": true,                  // 기존 파일 덮어쓰기
+        "run_now": false                    // false: 큐에 넣기, true: 즉시 실행
+    }
+    ```
+
+    Returns:
+        DataRefreshResponse: 요청 상태 및 작업 ID (비동기 실행 시)
+    """
+    try:
+        logger.info(f"데이터 갱신 요청: {request.symbols or '기본값'}")
+
+        # Redis 연결 여부 확인
+        if not HAS_RQ:
+            return DataRefreshResponse(
+                success=False,
+                message="RQ 라이브러리가 설치되지 않았습니다. Redis 연결이 필요합니다.",
+                status="failed"
+            )
+
+        # 기본값 사용 (환경변수에서)
+        symbols = request.symbols or (
+            os.getenv('UPBIT_SYMBOLS', 'KRW-BTC,KRW-ETH').split(',')
+        )
+        timeframes = request.timeframes or (
+            os.getenv('UPBIT_TIMEFRAMES', '1H,1D').split(',')
+        )
+
+        # 즉시 실행인 경우 (테스트용)
+        if request.run_now:
+            logger.info(f"즉시 실행: {symbols} × {timeframes}")
+            try:
+                # data_ingestion 모듈 import
+                from backend.app.jobs.data_ingestion import batch_fetch_candles_job
+
+                result = batch_fetch_candles_job(
+                    symbols=symbols,
+                    timeframes=timeframes,
+                    days=request.days,
+                    overwrite=request.overwrite
+                )
+
+                return DataRefreshResponse(
+                    success=result.get('success', False),
+                    message=f"데이터 갱신 {'완료' if result.get('success') else '실패'}",
+                    status="completed" if result.get('success') else "failed",
+                    details=result,
+                    timestamp=datetime.now().isoformat()
+                )
+
+            except ImportError:
+                return DataRefreshResponse(
+                    success=False,
+                    message="data_ingestion 모듈을 로드할 수 없습니다.",
+                    status="failed",
+                    timestamp=datetime.now().isoformat()
+                )
+
+        # 비동기 실행 (RQ 큐에 추가)
+        else:
+            try:
+                # Redis 연결
+                redis_conn = Redis(
+                    host=os.getenv('REDIS_HOST', 'localhost'),
+                    port=int(os.getenv('REDIS_PORT', 6379)),
+                    decode_responses=True
+                )
+
+                # 연결 테스트
+                redis_conn.ping()
+
+                # data_ingestion 모듈 import
+                from backend.app.jobs.data_ingestion import enqueue_batch_fetch
+
+                job = enqueue_batch_fetch(
+                    connection=redis_conn,
+                    symbols=symbols,
+                    timeframes=timeframes,
+                    days=request.days,
+                    overwrite=request.overwrite
+                )
+
+                return DataRefreshResponse(
+                    success=True,
+                    message=f"데이터 갱신 작업이 큐에 등록되었습니다 (Job ID: {job.id})",
+                    job_id=job.id,
+                    status="queued",
+                    timestamp=datetime.now().isoformat()
+                )
+
+            except Exception as e:
+                logger.error(f"RQ 작업 등록 실패: {str(e)}", exc_info=True)
+                return DataRefreshResponse(
+                    success=False,
+                    message=f"작업 등록 실패: {str(e)}",
+                    status="failed",
+                    timestamp=datetime.now().isoformat()
+                )
+
+    except Exception as e:
+        logger.error(f"데이터 갱신 요청 처리 중 오류: {str(e)}", exc_info=True)
+        return DataRefreshResponse(
+            success=False,
+            message=f"요청 처리 실패: {str(e)}",
+            status="failed",
+            timestamp=datetime.now().isoformat()
         )

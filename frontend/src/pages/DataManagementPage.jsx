@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import '../App.css'
 import '../styles/DataManagementPage.css'
 import { fetchInventory, uploadFile } from '../services/dataApi'
+import SchedulerPanel from '../components/SchedulerPanel'
 
 const TIMEFRAMES = ['1D', '1H', '5M', '1M']
 
@@ -187,6 +188,12 @@ export default function DataManagementPage() {
               onClick={() => setActiveTab('upload')}
             >
               📤 파일 업로드
+            </button>
+            <button
+              className={`tab-btn ${activeTab === 'scheduler' ? 'active' : ''}`}
+              onClick={() => setActiveTab('scheduler')}
+            >
+              ⏰ 자동 수집
             </button>
           </div>
 
@@ -432,6 +439,11 @@ export default function DataManagementPage() {
                 </ul>
               </div>
             </div>
+          )}
+
+          {/* Scheduler Tab */}
+          {activeTab === 'scheduler' && (
+            <SchedulerPanel />
           )}
         </div>
       </main>
