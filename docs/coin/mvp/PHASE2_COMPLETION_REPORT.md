@@ -418,6 +418,58 @@ State Management
 
 ---
 
+## 📋 Task 3.3 구현 증빙 체크리스트 (Phase 3 Expansion)
+
+### Task 3.3-1: 프리셋 자동 적용 버튼
+- ✅ **커밋**: `207b9d6` (2025-11-07)
+- ✅ **구현 대상**: BacktestPage + StrategyPresetModal
+- ✅ **테스트 상태**: 64/64 통과 (100%)
+- ✅ **테스트 증빙**: docs/coin/mvp/TASK_3_3_TEST_RESULTS.md
+- ✅ **주요 기능**:
+  - 프리셋 선택 시 자동으로 전략/파라미터 적용
+  - 백테스트 자동 실행 (별도 버튼 클릭 불필요)
+  - 폼 검증 (심볼, 기간 확인)
+  - 에러 메시지 표시 및 모달 제어
+
+### Task 3.3-2: 결과 비교 뷰 (CompareResultsModal)
+- ✅ **커밋**: `dce39b2` (2025-11-07)
+- ✅ **구현 대상**: SignalViewerPage + CompareResultsModal 컴포넌트
+- ✅ **테스트 상태**: 64/64 통과 (100%)
+- ✅ **테스트 증빙**: docs/coin/mvp/TASK_3_3_TEST_RESULTS.md
+- ✅ **테스트 실행 명령**:
+  ```bash
+  cd /home/limeking/projects/worktree/coin-23/frontend && npm test
+  ```
+- ✅ **주요 기능**:
+  - 히스토리 테이블에 선택 체크박스 (최대 3개)
+  - 메트릭 비교 테이블 (run_id, strategy, signals, win_rate, return, drawdown, execution_time)
+  - 성능 곡선 차트 (Recharts 기반)
+  - 심볼별 성과 카드 비교
+  - 반응형 UI (모바일 대응)
+
+### 파일 생성/수정 목록
+- ✅ **생성**: frontend/src/components/CompareResultsModal.jsx (250+ 줄)
+- ✅ **생성**: frontend/src/styles/CompareResultsModal.css (350+ 줄)
+- ✅ **수정**: frontend/src/pages/SignalViewerPage.jsx (선택 UI 추가)
+- ✅ **수정**: frontend/src/services/backtestApi.js (fetchBacktestDetail 추가)
+- ✅ **수정**: frontend/src/App.css (400+ 줄 추가)
+
+### 품질 지표
+| 항목 | 결과 | 상태 |
+|------|------|------|
+| 테스트 통과율 | 64/64 (100%) | ✅ |
+| 콘솔 에러 | 0개 | ✅ |
+| 콘솔 경고 | 0개 | ✅ |
+| 회귀 이슈 | 없음 | ✅ |
+| 문서 작성 | 완료 | ✅ |
+
+### 추적 가능성
+- 📄 **상세 테스트 보고서**: docs/coin/mvp/TASK_3_3_TEST_RESULTS.md
+- 📄 **구현 가이드**: docs/coin/mvp/TASK_3_2_IMPLEMENTATION.md
+- 🔗 **Git Commits**: `207b9d6`, `dce39b2`
+
+---
+
 **작성자**: Claude Code (AI Assistant)
 **검증일**: 2025-11-07
 **검증 환경**: Docker Compose, Python 3.11.14, Node.js 18+
