@@ -25,19 +25,31 @@ export async function fetchLatestBacktest() {
 }
 
 /**
- * 백테스트 히스토리 조회
+ * 백테스트 히스토리 조회 (Task 3.3-3 고급 필터링 지원)
  *
  * @param {Object} params - 조회 파라미터
  * @param {number} params.limit - 조회 개수 (기본값: 10, 최대: 100)
  * @param {number} params.offset - 시작 위치 (기본값: 0)
  * @param {string} params.strategy - 전략명 필터 (선택사항)
+ * @param {number} params.min_return - 최소 수익률 (%, 선택사항)
+ * @param {number} params.max_return - 최대 수익률 (%, 선택사항)
+ * @param {number} params.min_signals - 최소 신호 개수 (선택사항)
+ * @param {number} params.max_signals - 최대 신호 개수 (선택사항)
+ * @param {string} params.date_from - 시작 날짜 (YYYY-MM-DD, 선택사항)
+ * @param {string} params.date_to - 종료 날짜 (YYYY-MM-DD, 선택사항)
  * @returns {Promise<Object>} 히스토리 데이터 (BacktestHistoryResponse)
  * @throws {Error} API 요청 실패
  */
 export async function fetchBacktestHistory({
   limit = 10,
   offset = 0,
-  strategy = null
+  strategy = null,
+  min_return = null,
+  max_return = null,
+  min_signals = null,
+  max_signals = null,
+  date_from = null,
+  date_to = null,
 }) {
   try {
     const params = new URLSearchParams()
@@ -45,7 +57,24 @@ export async function fetchBacktestHistory({
     params.append('limit', Math.min(Math.max(limit, 1), 100))
     params.append('offset', Math.max(offset, 0))
 
+    // 기존 필터
     if (strategy) params.append('strategy', strategy)
+
+    // 신규 필터 (Task 3.3-3)
+    if (min_return !== null && min_return !== undefined) {
+      params.append('min_return', min_return)
+    }
+    if (max_return !== null && max_return !== undefined) {
+      params.append('max_return', max_return)
+    }
+    if (min_signals !== null && min_signals !== undefined) {
+      params.append('min_signals', min_signals)
+    }
+    if (max_signals !== null && max_signals !== undefined) {
+      params.append('max_signals', max_signals)
+    }
+    if (date_from) params.append('date_from', date_from)
+    if (date_to) params.append('date_to', date_to)
 
     const response = await axios.get(`${API_BASE}/history?${params.toString()}`)
     return response.data

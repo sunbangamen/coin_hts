@@ -3,6 +3,7 @@ import useSWR from 'swr'
 import { formatDateTime, formatNumber, formatPercent } from '../utils/formatters'
 import SignalsTable from '../components/SignalsTable'
 import CompareResultsModal from '../components/CompareResultsModal'
+import AdvancedFilterPanel from '../components/AdvancedFilterPanel'
 import {
   fetchLatestBacktest,
   fetchBacktestHistory,
@@ -318,7 +319,7 @@ function HistoryTable({ historyData, loading, error, onPageChange, onCompare }) 
 }
 
 /**
- * SignalViewerPage - 메인 페이지 컴포넌트
+ * SignalViewerPage - 메인 페이지 컴포넌트 (Task 3.3-3 고급 필터링 포함)
  */
 export default function SignalViewerPage() {
   const [historyOffset, setHistoryOffset] = useState(0)
@@ -326,6 +327,16 @@ export default function SignalViewerPage() {
   const [selectedStrategy, setSelectedStrategy] = useState(null)
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false)
   const [compareResults, setCompareResults] = useState([])
+
+  // 고급 필터 상태 (Task 3.3-3)
+  const [filters, setFilters] = useState({
+    min_return: null,
+    max_return: null,
+    min_signals: null,
+    max_signals: null,
+    date_from: null,
+    date_to: null,
+  })
 
   // useSWR을 사용한 최신 결과 폴링 (5초 간격)
   const { data: latestData, error: latestError, isLoading: latestLoading } = useSWR(
@@ -338,18 +349,32 @@ export default function SignalViewerPage() {
     }
   )
 
-  // useSWR을 사용한 히스토리 조회
+  // useSWR을 사용한 히스토리 조회 (Task 3.3-3 필터 포함)
   const historyParams = new URLSearchParams()
   historyParams.append('limit', historyLimit)
   historyParams.append('offset', historyOffset)
   if (selectedStrategy) historyParams.append('strategy', selectedStrategy)
+
+  // 고급 필터 파라미터 추가
+  if (filters.min_return !== null) historyParams.append('min_return', filters.min_return)
+  if (filters.max_return !== null) historyParams.append('max_return', filters.max_return)
+  if (filters.min_signals !== null) historyParams.append('min_signals', filters.min_signals)
+  if (filters.max_signals !== null) historyParams.append('max_signals', filters.max_signals)
+  if (filters.date_from) historyParams.append('date_from', filters.date_from)
+  if (filters.date_to) historyParams.append('date_to', filters.date_to)
 
   const { data: historyData, error: historyError, isLoading: historyLoading } = useSWR(
     `/api/backtests/history?${historyParams.toString()}`,
     () => fetchBacktestHistory({
       limit: historyLimit,
       offset: historyOffset,
-      strategy: selectedStrategy
+      strategy: selectedStrategy,
+      min_return: filters.min_return,
+      max_return: filters.max_return,
+      min_signals: filters.min_signals,
+      max_signals: filters.max_signals,
+      date_from: filters.date_from,
+      date_to: filters.date_to,
     }),
     {
       dedupingInterval: 2000
@@ -363,6 +388,25 @@ export default function SignalViewerPage() {
   const handleCompareResults = (results) => {
     setCompareResults(results)
     setIsCompareModalOpen(true)
+  }
+
+  // 필터 변경 핸들러 (Task 3.3-3)
+  const handleFiltersChange = (newFilters) => {
+    setFilters(newFilters)
+    setHistoryOffset(0) // 필터 변경시 첫 페이지로 리셋
+  }
+
+  // 필터 초기화 핸들러 (Task 3.3-3)
+  const handleResetFilters = () => {
+    setFilters({
+      min_return: null,
+      max_return: null,
+      min_signals: null,
+      max_signals: null,
+      date_from: null,
+      date_to: null,
+    })
+    setHistoryOffset(0)
   }
 
   return (
@@ -380,6 +424,15 @@ export default function SignalViewerPage() {
               data={latestData}
               loading={latestLoading}
               error={latestError}
+            />
+          </section>
+
+          {/* 고급 필터 섹션 (Task 3.3-3) */}
+          <section className="filter-section">
+            <AdvancedFilterPanel
+              filters={filters}
+              onFiltersChange={handleFiltersChange}
+              onReset={handleResetFilters}
             />
           </section>
 
