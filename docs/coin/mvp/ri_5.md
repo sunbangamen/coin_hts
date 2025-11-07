@@ -156,13 +156,74 @@
 
 ---
 
-### Step 5: App.jsx API 연동 ✅ **완료** (현재 구현 방식)
+### Step 5: App.jsx API 연동 ✅ **완료** (동기 방식)
 
 **현황**:
-- ✅ **완료**: Frontend → Backend API 연동
+- ✅ **완료**: Frontend → Backend API 연동 (동기 방식)
 - ✅ **동작**: POST /api/backtests/run 실행 → 즉시 결과 표시
 
-**현재 구현**:
+**현재 구현 (동기 방식)**:
+
+#### Backend API 엔드포인트
+```
+POST /api/backtests/run
+Content-Type: application/json
+
+Request:
+{
+  "strategy": "volume_zone_breakout",
+  "symbols": ["BTC_KRW", "ETH_KRW"],
+  "start_date": "2024-01-01",
+  "end_date": "2024-02-29",
+  "timeframe": "1d",
+  "params": {}
+}
+
+Response (200 OK):
+{
+  "version": "1.1.0",
+  "run_id": "e1c4d889-892f-4750-b7d8-105112d5288e",
+  "strategy": "volume_zone_breakout",
+  "params": {},
+  "start_date": "2024-01-01",
+  "end_date": "2024-02-29",
+  "timeframe": "1d",
+  "symbols": [
+    {
+      "symbol": "BTC_KRW",
+      "signals": [
+        {
+          "symbol": "BTC_KRW",
+          "type": "buy",
+          "timestamp": "2024-01-12T00:00:00+00:00",
+          "entry_price": 52364029.59,
+          "exit_price": 54349847.91,
+          "return_pct": 0.0379
+        },
+        ...
+      ],
+      "win_rate": 0.5,
+      "avg_return": 0.0769,
+      "max_drawdown": 25.58,
+      "avg_hold_bars": 1.0,
+      "performance_curve": [
+        {
+          "timestamp": "2024-01-12",
+          "equity": 1.0379,
+          "drawdown": null
+        },
+        ...
+      ]
+    },
+    {
+      "symbol": "ETH_KRW",
+      ...동일한 구조...
+    }
+  ]
+}
+```
+
+#### Frontend 구현
 ```javascript
 // frontend/src/App.jsx:172
 const response = await axios.post('/api/backtests/run', requestData)
@@ -172,13 +233,54 @@ setShowResult(true)
 
 **작업 설명**:
 - `App.jsx` handleSubmit에서 `/api/backtests/run` POST 요청 실행
+- 요청 파라미터:
+  - `strategy`: 전략 이름 (volume_long_candle, volume_zone_breakout)
+  - `symbols`: 심볼 배열 (예: ["BTC_KRW", "ETH_KRW"])
+  - `start_date`: 시작 날짜 (YYYY-MM-DD)
+  - `end_date`: 종료 날짜 (YYYY-MM-DD)
+  - `timeframe`: 타임프레임 (기본값: 1d)
+  - `params`: 전략 파라미터 (선택사항, 기본값 자동 적용)
 - 응답 데이터를 즉시 `BacktestResults` 컴포넌트에 전달
 - 로딩 상태 및 에러 처리 구현
+
+**BacktestResponse 스키마**:
+```python
+class APISignal(BaseModel):
+    """개별 거래 신호"""
+    symbol: str              # 거래 심볼
+    type: str                # "buy" 또는 "sell"
+    timestamp: str           # ISO 8601 (UTC)
+    entry_price: float       # 진입 가격
+    exit_price: float        # 청산 가격
+    return_pct: float        # 거래 수익률 (소수점)
+
+class SymbolResult(BaseModel):
+    """심볼별 백테스트 결과"""
+    symbol: str
+    signals: List[APISignal] # Step 4 신호 테이블용
+    win_rate: float          # 승률
+    avg_return: float        # 평균 수익률
+    max_drawdown: float      # 최대 낙폭
+    avg_hold_bars: float     # 평균 보유 기간
+    performance_curve: List[PerformancePoint]  # Step 6 차트용
+
+class BacktestResponse(BaseModel):
+    """백테스트 결과"""
+    version: str             # API 버전
+    run_id: str              # 실행 고유 ID (UUID)
+    strategy: str            # 실행한 전략
+    params: Dict             # 적용된 파라미터
+    start_date: str          # 분석 시작 날짜
+    end_date: str            # 분석 종료 날짜
+    timeframe: str           # 타임프레임
+    symbols: List[SymbolResult]  # 심볼별 결과
+```
 
 **예상 산출물**:
 - ✅ 수정된 `App.jsx` (포함됨)
 - ✅ API 연동 로직 (완료)
 - ✅ `BacktestResults` 컴포넌트 통합 (완료)
+- ✅ 동기 API 플로우 (즉시 응답)
 
 **의존성**: Step 2 ✅, Backend API (Task 3) ✅
 
@@ -186,41 +288,143 @@ setShowResult(true)
 - ✅ 백테스트 실행 후 결과가 UI에 표시
 - ✅ 로딩 스피너 표시
 - ✅ 에러 발생 시 에러 메시지 표시
+- ✅ 30개 신호 이상 렌더링 성공 (Step 4 검증 완료)
 
-**향후 개선 (Phase 2 고려사항)**:
-- `/api/backtests/latest` 엔드포인트 추가 (재조회 기능)
-- `/api/backtests/{run_id}` 직접 조회 플로우 (히스토리 조회)
-- 이 기능들은 현재 구현으로도 Step 5 요구사항을 충족하므로, Phase 2에서 필요시 추가
+**제한사항**:
+- 대량 데이터 처리 시 응답 시간 증가 (현재: 작은 데이터셋에서는 빠름)
+- UI 블로킹: 응답 대기 중 UI 반응성 제한 (로딩 상태 표시로 해결)
+
+**Phase 2 확장 계획 (비동기 방식)**:
+
+#### 비동기 API 아키텍처
+```
+Frontend:
+  POST /api/backtests/run-async
+  ↓
+Backend 큐에 태스크 저장
+  ↓
+즉시 응답 (task_id)
+  ↓
+Frontend (폴링 또는 WebSocket):
+  GET /api/backtests/status/{task_id}
+  ↓
+진행률 표시 (0-100%)
+  ↓
+완료 시: GET /api/backtests/{run_id}
+  ↓
+결과 표시
+```
+
+#### 비동기 API 엔드포인트 (미구현)
+```
+POST /api/backtests/run-async
+Request: (동기 방식과 동일)
+Response (202 Accepted):
+{
+  "task_id": "abc123",
+  "status": "queued",
+  "status_url": "/api/backtests/status/abc123"
+}
 
 ---
 
-### Step 6: (선택) 차트 구현 ⏸️ **Phase 2 검토**
+GET /api/backtests/status/{task_id}
+Response (200 OK):
+{
+  "task_id": "abc123",
+  "status": "in_progress",
+  "progress": 45,  # 0-100%
+  "eta_seconds": 30
+}
+
+또는
+
+{
+  "task_id": "abc123",
+  "status": "completed",
+  "run_id": "e1c4d889-...",
+  "result_url": "/api/backtests/e1c4d889-..."
+}
+
+---
+
+GET /api/backtests/{run_id}
+Response (200 OK):
+BacktestResponse (동기 방식과 동일)
+```
+
+#### WebSocket 실시간 진행률 (선택사항)
+```
+WS /api/backtests/ws/{task_id}
+
+Message (JSON):
+{
+  "event": "progress",
+  "progress": 45,
+  "eta_seconds": 30,
+  "message": "Processing symbols..."
+}
+
+또는
+
+{
+  "event": "completed",
+  "run_id": "e1c4d889-..."
+}
+```
+
+**Phase 2 우선순위**:
+1. **필수**: 비동기 API 엔드포인트 구현 (`/api/backtests/run-async`)
+2. **필수**: 상태 조회 엔드포인트 (`/api/backtests/status/{task_id}`)
+3. **권장**: Frontend 폴링 로직 (진행률 표시)
+4. **선택**: WebSocket 실시간 진행률 (더 나은 UX)
+
+---
+
+### Step 6: (선택) 차트 구현 ⏸️ **Phase 2 재평가**
 
 **현황**:
-- ⏸️ **미진행**: 선택사항으로 보류
-- ⚠️ **차단 요인**: Step 4 (신호 데이터) 완료 필요
+- ⏸️ **보류**: 선택사항으로 Phase 2에서 재평가
+- ✅ **전제 조건 완료**: Step 1-5 완료, Step 4 신호 데이터 검증 완료
 
-**작업 설명**:
-- Recharts 라이브러리 설치 및 통합
-- 누적 수익률 곡선 차트 컴포넌트
-- 시간별 거래 수 막대 차트 (선택)
+**Phase 1 의사결정**:
+- **결정**: Step 6 차트 구현은 Phase 2에서 재평가 (선택사항)
+- **근거**: Phase 1에서는 신호 테이블(Step 4)과 API 연동(Step 5)을 우선
+- **상태**: 기술 검증 및 가이드 완성 (부록 참고)
 
-**예상 산출물**:
-- 차트 컴포넌트
+**기술 검증 (Phase 1 완료)**:
+- ✅ Backend API: performance_curve 데이터 확인 (30개 포인트)
+- ✅ 데이터 구조: Equity Curve 계산 로직 검증
+- ✅ 라이브러리 후보: Recharts, Chart.js, Victory 비교
+
+**작업 설명 (Phase 2에서 실행)**:
+- Recharts 라이브러리 설치 및 통합 (권장)
+- Equity Curve 라인 차트 구현 (주요)
+- 거래 신호 오버레이 표시 (선택)
+- 최대 낙폭(Drawdown) 표시 (선택)
+
+**예상 산출물** (Phase 2):
+- EquityChart 컴포넌트
 - Recharts 통합
+- BacktestResults 컴포넌트 통합
 
 **의존성**:
-- Step 2-5 완료 ✅
-- Step 4 완료 (신호 데이터 필요)
+- ✅ Step 1-5 완료
+- ✅ Step 4 완료 (성능 곡선 데이터)
 
-**확인 방법**:
-- 차트가 데이터를 반영하여 렌더링
-- 반응형 차트 동작
+**확인 방법** (Phase 2):
+- 차트가 performance_curve 데이터를 반영하여 렌더링
+- 반응형 차트 동작 (모바일/데스크톱)
+- 범례, 축 라벨 표시
 
 **우선순위 판단**:
-- **낮음 (P2)**: Issue #5에서 명시된 선택사항
-- **필수 조건**: Step 4 (신호 테이블) 완료 후 재평가
-- **권장**: Phase 2에서 신호 데이터와 함께 구현
+- **보류 (Phase 2)**: Issue #5에서 명시된 선택사항
+- **재평가**: Phase 2 킥오프 시점에 다음 기준으로 판단
+  - 사용자 피드백 (신호 테이블 만으로 충분한지)
+  - 개발 리소스 (추가 개발 가능 시간)
+  - 시간 제약 (다른 기능 우선순위)
+
+**Phase 2 계획** → `step6_chart_guide.md` 참조
 
 ---
 
