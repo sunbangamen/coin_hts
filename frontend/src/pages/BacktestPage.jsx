@@ -168,6 +168,61 @@ export default function BacktestPage() {
     setIsPresetModalOpen(false)
   }
 
+  // Handle preset run immediately (프리셋으로 바로 실행)
+  const handlePresetRunImmediately = async (preset) => {
+    try {
+      setApiError(null)
+
+      // 프리셋 데이터를 폼에 적용
+      const updatedFormData = {
+        ...formData,
+        strategy: preset.strategy,
+        params: { ...preset.params }
+      }
+      setFormData(updatedFormData)
+
+      // 유효성 검증
+      const validation = validateBacktestRequest({
+        symbols: formData.symbols,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        strategy: preset.strategy,
+        params: preset.params
+      })
+
+      if (!validation.isValid) {
+        setApiError('프리셋 적용 후 필수 항목을 확인하세요: 심볼, 기간이 필요합니다')
+        setIsPresetModalOpen(false)
+        return
+      }
+
+      // 백테스트 실행
+      setLoading(true)
+      const symbolList = validateSymbols(formData.symbols).symbols
+      const requestData = {
+        strategy: preset.strategy,
+        symbols: symbolList,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        timeframe: formData.timeframe,
+        params: preset.params
+      }
+
+      const response = await axios.post('/api/backtests/run', requestData)
+      setResult(response.data)
+      setShowResult(true)
+      setIsPresetModalOpen(false)
+    } catch (error) {
+      setApiError(
+        error.response?.data?.detail ||
+        error.message ||
+        '프리셋 실행 중 오류가 발생했습니다'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Handle general input change with real-time validation
   const handleInputChange = (e) => {
     const { name, value } = e.target
@@ -491,6 +546,7 @@ export default function BacktestPage() {
         isOpen={isPresetModalOpen}
         onClose={() => setIsPresetModalOpen(false)}
         onPresetSelect={handlePresetSelect}
+        onPresetRunImmediately={handlePresetRunImmediately}
         currentStrategy={formData.strategy}
         currentParams={formData.params}
       />

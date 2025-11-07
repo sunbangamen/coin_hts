@@ -13,6 +13,7 @@ import {
  *   - isOpen (bool): 모달 열림 여부
  *   - onClose (func): 모달 닫기 핸들러
  *   - onPresetSelect (func): 프리셋 선택 핸들러 (name, preset 전달)
+ *   - onPresetRunImmediately (func): 프리셋으로 바로 실행 (preset 전달)
  *   - currentStrategy (string): 현재 선택된 전략
  *   - currentParams (Object): 현재 파라미터
  */
@@ -20,6 +21,7 @@ export default function StrategyPresetModal({
   isOpen,
   onClose,
   onPresetSelect,
+  onPresetRunImmediately,
   currentStrategy,
   currentParams
 }) {
@@ -62,6 +64,14 @@ export default function StrategyPresetModal({
         params: preset.params
       })
     }
+  }
+
+  // 프리셋으로 바로 실행
+  const handleRunPresetImmediately = (preset) => {
+    if (onPresetRunImmediately) {
+      onPresetRunImmediately(preset)
+    }
+    setIsPresetModalOpen(false)
   }
 
   // 프리셋 저장
@@ -183,8 +193,17 @@ export default function StrategyPresetModal({
                         <button
                           className="action-btn apply-btn"
                           onClick={() => handleSelectPreset(preset)}
+                          title="파라미터만 적용"
                         >
                           ✓ 적용
+                        </button>
+                        <button
+                          className="action-btn run-btn"
+                          onClick={() => handleRunPresetImmediately(preset)}
+                          disabled={loading}
+                          title="파라미터 적용 후 바로 실행"
+                        >
+                          🚀 실행
                         </button>
                         <button
                           className="action-btn delete-btn"
@@ -448,6 +467,17 @@ export default function StrategyPresetModal({
           background: #3498db;
           color: white;
           border-color: #3498db;
+        }
+
+        .run-btn:hover {
+          background: #27ae60;
+          color: white;
+          border-color: #27ae60;
+        }
+
+        .run-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
 
         .delete-btn:hover {
