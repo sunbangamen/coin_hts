@@ -6,6 +6,7 @@ Coin Backtesting API
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, validator
 from typing import List, Dict, Optional, Any
 from datetime import datetime
@@ -18,6 +19,7 @@ import time
 from backend.app.data_loader import load_ohlcv_data
 from backend.app.strategy_factory import StrategyFactory
 from backend.app.task_manager import TaskManager, TaskStatus
+from backend.app.result_manager import ResultManager
 # from backend.app.jobs import run_backtest_job  # Removed: not used in new architecture
 from rq import Queue
 from backend.app.config import redis_conn
@@ -410,6 +412,9 @@ async def root():
             "POST /api/backtests/run": "Run backtest (synchronous)",
             "POST /api/backtests/run-async": "Run backtest (asynchronous, returns task_id)",
             "GET /api/backtests/{run_id}": "Get backtest result",
+            "GET /api/backtests/latest": "Get latest backtest result (Phase 2)",
+            "GET /api/backtests/history": "Get backtest history with pagination (Phase 2)",
+            "GET /api/backtests/{run_id}/download": "Download backtest result as JSON (Phase 2)",
             "GET /api/backtests/status/{task_id}": "Get async task status",
             "GET /api/strategies": "List supported strategies",
             "GET /health": "Health check",
@@ -641,12 +646,17 @@ async def run_backtest(request: BacktestRequest):
             description=None,  # 선택적 필드
         )
 
-        # 결과를 JSON 파일로 저장
-        result_file = os.path.join(RESULTS_DIR, f"{run_id}.json")
+        # 결과를 JSON 파일로 저장 및 인덱스 업데이트
         try:
-            with open(result_file, "w", encoding="utf-8") as f:
-                json.dump(response.dict(), f, indent=2, ensure_ascii=False)
-            logger.info(f"[{run_id}] Result saved to {result_file}")
+            if not ResultManager.save_result(DATA_ROOT, run_id, response.dict()):
+                logger.error(f"[{run_id}] Failed to save result via ResultManager")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to save result",
+                )
+            logger.info(f"[{run_id}] Result saved and indexed")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"[{run_id}] Failed to save result file: {e}")
             raise HTTPException(
@@ -669,6 +679,185 @@ async def run_backtest(request: BacktestRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/backtests/latest",
+    response_model=BacktestResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_latest_backtest():
+    """
+    최신 백테스트 결과 조회 (Phase 2)
+
+    가장 최근에 실행된 백테스트 결과를 반환합니다.
+
+    Returns:
+        BacktestResponse: 최신 백테스트 결과
+
+    Raises:
+        HTTPException: 결과를 찾을 수 없음 (404)
+    """
+    try:
+        latest_run_id = ResultManager.get_latest_run_id(DATA_ROOT)
+
+        if not latest_run_id:
+            logger.warning("No backtest results found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No backtest results found",
+            )
+
+        logger.info(f"Retrieving latest backtest: {latest_run_id}")
+
+        result_data = ResultManager.get_result(DATA_ROOT, latest_run_id)
+        if not result_data:
+            logger.warning(f"Latest result not found: {latest_run_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Latest backtest result not found",
+            )
+
+        logger.info(f"Latest result retrieved: {latest_run_id}")
+        return BacktestResponse(**result_data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving latest backtest: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve latest backtest: {str(e)}",
+        )
+
+
+class BacktestHistoryItem(BaseModel):
+    """백테스트 히스토리 항목 (Phase 2)"""
+    run_id: str = Field(..., description="실행 ID")
+    strategy: str = Field(..., description="전략명")
+    symbols: List[str] = Field(..., description="심볼 목록")
+    start_date: str = Field(..., description="시작 날짜")
+    end_date: str = Field(..., description="종료 날짜")
+    timeframe: str = Field(..., description="타임프레임")
+    total_signals: int = Field(..., description="총 신호 개수")
+    execution_time: float = Field(..., description="실행 시간 (초)")
+    timestamp: str = Field(..., description="실행 시간 (ISO 8601, UTC)")
+
+
+class BacktestHistoryResponse(BaseModel):
+    """백테스트 히스토리 응답 (Phase 2)"""
+    total: int = Field(..., description="전체 항목 수")
+    limit: int = Field(..., description="페이지 크기")
+    offset: int = Field(..., description="시작 위치")
+    items: List[BacktestHistoryItem] = Field(..., description="히스토리 항목 배열")
+
+
+@app.get(
+    "/api/backtests/history",
+    response_model=BacktestHistoryResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_backtest_history(
+    limit: int = 10,
+    offset: int = 0,
+    strategy: Optional[str] = None,
+):
+    """
+    백테스트 히스토리 조회 (Phase 2)
+
+    페이지네이션을 지원하는 백테스트 히스토리 목록을 반환합니다.
+
+    Args:
+        limit: 조회 개수 (기본: 10, 최대: 100)
+        offset: 시작 위치 (기본: 0)
+        strategy: 전략명 필터 (선택사항)
+
+    Returns:
+        BacktestHistoryResponse: 히스토리 목록 및 메타데이터
+
+    Raises:
+        HTTPException: 쿼리 매개변수 오류
+    """
+    try:
+        # 제한값 설정
+        limit = min(max(limit, 1), 100)  # 1 ~ 100
+        offset = max(offset, 0)
+
+        logger.info(f"Retrieving backtest history: limit={limit}, offset={offset}, strategy={strategy}")
+
+        history = ResultManager.get_history(
+            data_root=DATA_ROOT,
+            limit=limit,
+            offset=offset,
+            strategy=strategy,
+        )
+
+        # Pydantic 모델로 변환
+        items = [BacktestHistoryItem(**item) for item in history["items"]]
+
+        logger.info(f"History retrieved: total={history['total']}, items={len(items)}")
+
+        return BacktestHistoryResponse(
+            total=history["total"],
+            limit=history["limit"],
+            offset=history["offset"],
+            items=items,
+        )
+
+    except Exception as e:
+        logger.error(f"Error retrieving backtest history: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve backtest history: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/backtests/{run_id}/download",
+    status_code=status.HTTP_200_OK,
+)
+async def download_backtest_result(run_id: str):
+    """
+    백테스트 결과 파일 다운로드 (Phase 2)
+
+    JSON 형식의 결과 파일을 다운로드합니다.
+
+    Args:
+        run_id: 실행 ID
+
+    Returns:
+        FileResponse: 결과 JSON 파일
+
+    Raises:
+        HTTPException: 파일을 찾을 수 없음 (404)
+    """
+    try:
+        result_file = os.path.join(RESULTS_DIR, f"{run_id}.json")
+
+        if not os.path.exists(result_file):
+            logger.warning(f"Download file not found: {run_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Backtest result not found: {run_id}",
+            )
+
+        logger.info(f"Downloading backtest result: {run_id}")
+
+        return FileResponse(
+            path=result_file,
+            filename=f"backtest_{run_id}.json",
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="backtest_{run_id}.json"'},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading backtest result {run_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download backtest result: {str(e)}",
         )
 
 

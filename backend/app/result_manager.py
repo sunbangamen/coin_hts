@@ -6,6 +6,7 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+import fcntl
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,227 @@ class ResultManager:
         if os.path.exists(result_file):
             return result_file
         return None
+
+    @staticmethod
+    def _get_index_file_path(data_root: str) -> str:
+        """
+        인덱스 파일 경로 반환
+
+        Args:
+            data_root: 데이터 루트 디렉토리
+
+        Returns:
+            인덱스 파일 경로 (RESULTS_DIR/index.json)
+        """
+        results_dir = os.path.join(data_root, "results")
+        return os.path.join(results_dir, "index.json")
+
+    @staticmethod
+    def _read_index(data_root: str) -> Dict[str, Any]:
+        """
+        index.json 파일 읽기 (원자적 읽기)
+
+        Args:
+            data_root: 데이터 루트 디렉토리
+
+        Returns:
+            인덱스 데이터 dict
+        """
+        index_file = ResultManager._get_index_file_path(data_root)
+
+        if not os.path.exists(index_file):
+            return {"items": []}
+
+        try:
+            with open(index_file, "r", encoding="utf-8") as f:
+                # 읽기 잠금 설정 (비차단)
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    data = json.load(f)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            return data
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in index file: {e}")
+            return {"items": []}
+        except Exception as e:
+            logger.error(f"Error reading index file: {e}")
+            return {"items": []}
+
+    @staticmethod
+    def _write_index(data_root: str, index_data: Dict[str, Any]) -> bool:
+        """
+        index.json 파일 쓰기 (원자적 쓰기)
+
+        Args:
+            data_root: 데이터 루트 디렉토리
+            index_data: 인덱스 데이터
+
+        Returns:
+            성공 여부
+        """
+        results_dir = os.path.join(data_root, "results")
+        os.makedirs(results_dir, exist_ok=True)
+
+        index_file = ResultManager._get_index_file_path(data_root)
+        temp_file = index_file + ".tmp"
+
+        try:
+            # 임시 파일에 쓰기
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(index_data, f, indent=2, ensure_ascii=False)
+
+            # 원자적 이름 변경
+            os.replace(temp_file, index_file)
+            logger.info(f"Index file updated: {index_file}")
+            return True
+        except Exception as e:
+            logger.error(f"Error writing index file: {e}")
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            return False
+
+    @staticmethod
+    def save_result(
+        data_root: str,
+        run_id: str,
+        result_data: Dict[str, Any],
+    ) -> bool:
+        """
+        백테스트 결과 저장 및 인덱스 업데이트
+
+        Args:
+            data_root: 데이터 루트 디렉토리
+            run_id: 실행 ID
+            result_data: 결과 데이터 (BacktestResponse dict)
+
+        Returns:
+            성공 여부
+        """
+        # 1. 결과 파일 저장
+        results_dir = os.path.join(data_root, "results")
+        os.makedirs(results_dir, exist_ok=True)
+
+        result_file = os.path.join(results_dir, f"{run_id}.json")
+        try:
+            with open(result_file, "w", encoding="utf-8") as f:
+                json.dump(result_data, f, indent=2, ensure_ascii=False, default=str)
+            logger.info(f"Result file saved: {result_file}")
+        except Exception as e:
+            logger.error(f"Failed to save result file: {e}")
+            return False
+
+        # 2. 인덱스 업데이트
+        index_data = ResultManager._read_index(data_root)
+
+        # 메타데이터 추출
+        metadata = {
+            "run_id": run_id,
+            "strategy": result_data.get("strategy"),
+            "symbols": result_data.get("symbols", []) if isinstance(result_data.get("symbols"), list) else [s["symbol"] for s in result_data.get("symbols", [])],
+            "start_date": result_data.get("start_date"),
+            "end_date": result_data.get("end_date"),
+            "timeframe": result_data.get("timeframe"),
+            "total_signals": result_data.get("total_signals"),
+            "execution_time": result_data.get("execution_time"),
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+
+        # 기존 항목 확인 (덮어쓰기 시)
+        items = index_data.get("items", [])
+        existing_idx = next((i for i, item in enumerate(items) if item["run_id"] == run_id), None)
+
+        if existing_idx is not None:
+            items[existing_idx] = metadata
+        else:
+            items.insert(0, metadata)  # 최신순으로 앞에 추가
+
+        index_data["items"] = items
+
+        return ResultManager._write_index(data_root, index_data)
+
+    @staticmethod
+    def get_latest_run_id(data_root: str) -> Optional[str]:
+        """
+        최신 실행 ID 조회
+
+        Args:
+            data_root: 데이터 루트 디렉토리
+
+        Returns:
+            최신 run_id 또는 None
+        """
+        index_data = ResultManager._read_index(data_root)
+        items = index_data.get("items", [])
+
+        if items:
+            return items[0]["run_id"]
+        return None
+
+    @staticmethod
+    def get_history(
+        data_root: str,
+        limit: int = 10,
+        offset: int = 0,
+        strategy: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        백테스트 히스토리 조회 (페이지네이션 지원)
+
+        Args:
+            data_root: 데이터 루트 디렉토리
+            limit: 조회 개수 (기본: 10)
+            offset: 시작 위치 (기본: 0)
+            strategy: 전략명 필터 (선택사항)
+
+        Returns:
+            히스토리 dict
+                - total: 전체 항목 수
+                - limit: 조회 개수
+                - offset: 시작 위치
+                - items: 결과 배열
+        """
+        index_data = ResultManager._read_index(data_root)
+        items = index_data.get("items", [])
+
+        # 전략 필터 적용
+        if strategy:
+            items = [item for item in items if item.get("strategy") == strategy]
+
+        total = len(items)
+        paginated_items = items[offset : offset + limit]
+
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "items": paginated_items,
+        }
+
+    @staticmethod
+    def get_result(data_root: str, run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        특정 실행 결과 조회
+
+        Args:
+            data_root: 데이터 루트 디렉토리
+            run_id: 실행 ID
+
+        Returns:
+            결과 데이터 dict 또는 None
+        """
+        results_dir = os.path.join(data_root, "results")
+        result_file = os.path.join(results_dir, f"{run_id}.json")
+
+        if not os.path.exists(result_file):
+            return None
+
+        try:
+            with open(result_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error reading result file {result_file}: {e}")
+            return None
 
     @staticmethod
     def cleanup_old_results(
