@@ -2,6 +2,7 @@ import { useState } from 'react'
 import axios from 'axios'
 import '../App.css'
 import BacktestResults from '../components/BacktestResults'
+import StrategyPresetModal from '../components/StrategyPresetModal'
 import {
   validateSymbols,
   validateDateRange,
@@ -109,6 +110,9 @@ export default function BacktestPage() {
   const [result, setResult] = useState(null)
   const [showResult, setShowResult] = useState(false)
 
+  // Preset modal state
+  const [isPresetModalOpen, setIsPresetModalOpen] = useState(false)
+
   /**
    * Perform real-time validation and update errors
    * Called after form data changes
@@ -149,6 +153,19 @@ export default function BacktestPage() {
     setFormData(updatedFormData)
     setApiError(null)
     performRealTimeValidation(updatedFormData)
+  }
+
+  // Handle preset modal selection
+  const handlePresetSelect = (presetName, presetData) => {
+    const updatedFormData = {
+      ...formData,
+      strategy: presetData.strategy,
+      params: { ...presetData.params }
+    }
+    setFormData(updatedFormData)
+    setApiError(null)
+    performRealTimeValidation(updatedFormData)
+    setIsPresetModalOpen(false)
   }
 
   // Handle general input change with real-time validation
@@ -296,7 +313,17 @@ export default function BacktestPage() {
 
             {/* Strategy Presets */}
             <div className="presets-section">
-              <label>🎯 추천 프리셋 (파라미터 자동 설정)</label>
+              <div className="presets-header">
+                <label>🎯 추천 프리셋 (파라미터 자동 설정)</label>
+                <button
+                  type="button"
+                  className="preset-manage-btn"
+                  onClick={() => setIsPresetModalOpen(true)}
+                  title="저장된 프리셋 관리"
+                >
+                  ⚙️ 프리셋 관리
+                </button>
+              </div>
               <div className="presets-buttons">
                 {Object.entries(STRATEGY_PRESETS).map(([key, preset]) => (
                   <button
@@ -458,6 +485,15 @@ export default function BacktestPage() {
           />
         </div>
       </main>
+
+      {/* Preset Modal */}
+      <StrategyPresetModal
+        isOpen={isPresetModalOpen}
+        onClose={() => setIsPresetModalOpen(false)}
+        onPresetSelect={handlePresetSelect}
+        currentStrategy={formData.strategy}
+        currentParams={formData.params}
+      />
     </div>
   )
 }
