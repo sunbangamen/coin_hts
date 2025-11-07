@@ -20,6 +20,7 @@ from backend.app.data_loader import load_ohlcv_data
 from backend.app.strategy_factory import StrategyFactory
 from backend.app.task_manager import TaskManager, TaskStatus
 from backend.app.result_manager import ResultManager
+from backend.app.strategy_preset_manager import StrategyPresetManager
 # from backend.app.jobs import run_backtest_job  # Removed: not used in new architecture
 from rq import Queue
 from backend.app.config import redis_conn
@@ -751,6 +752,24 @@ class BacktestHistoryResponse(BaseModel):
     limit: int = Field(..., description="페이지 크기")
     offset: int = Field(..., description="시작 위치")
     items: List[BacktestHistoryItem] = Field(..., description="히스토리 항목 배열")
+
+
+class StrategyPreset(BaseModel):
+    """전략 프리셋 (Phase 3)"""
+    name: str = Field(..., description="프리셋 이름", min_length=1, max_length=100)
+    strategy: str = Field(..., description="전략명")
+    params: Dict[str, Any] = Field(..., description="전략 파라미터")
+    description: str = Field("", description="프리셋 설명")
+
+
+class StrategyPresetResponse(BaseModel):
+    """전략 프리셋 응답 (Phase 3)"""
+    name: str = Field(..., description="프리셋 이름")
+    strategy: str = Field(..., description="전략명")
+    params: Dict[str, Any] = Field(..., description="전략 파라미터")
+    description: str = Field(..., description="프리셋 설명")
+    created_at: str = Field(..., description="생성 시간 (ISO 8601, UTC)")
+    updated_at: str = Field(..., description="업데이트 시간 (ISO 8601, UTC)")
 
 
 @app.get(
@@ -1604,4 +1623,215 @@ async def trigger_scheduler_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=result['error']
+        )
+
+
+# ============================================================================
+# 전략 프리셋 관리 API (Phase 3)
+# ============================================================================
+
+@app.get(
+    "/api/strategies/presets",
+    response_model=List[StrategyPresetResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def list_strategy_presets():
+    """
+    모든 전략 프리셋 조회 (Phase 3)
+
+    Returns:
+        List[StrategyPresetResponse]: 프리셋 목록 (생성일 역순)
+
+    예제:
+        curl http://localhost:8000/api/strategies/presets
+    """
+    try:
+        presets = StrategyPresetManager.get_all_presets(DATA_ROOT)
+        logger.info(f"Retrieved {len(presets)} strategy presets")
+        return [StrategyPresetResponse(**p) for p in presets]
+    except Exception as e:
+        logger.error(f"Error listing strategy presets: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list presets: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/strategies/presets/{name}",
+    response_model=StrategyPresetResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_strategy_preset(name: str):
+    """
+    특정 전략 프리셋 조회 (Phase 3)
+
+    Args:
+        name (str): 프리셋 이름
+
+    Returns:
+        StrategyPresetResponse: 프리셋 상세 정보
+
+    Raises:
+        HTTPException: 프리셋을 찾을 수 없음
+
+    예제:
+        curl http://localhost:8000/api/strategies/presets/conservative
+    """
+    try:
+        preset = StrategyPresetManager.get_preset(DATA_ROOT, name)
+        if not preset:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Strategy preset '{name}' not found",
+            )
+        logger.info(f"Retrieved strategy preset: {name}")
+        return StrategyPresetResponse(**preset)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting strategy preset '{name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get preset: {str(e)}",
+        )
+
+
+@app.post(
+    "/api/strategies/presets",
+    response_model=StrategyPresetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_strategy_preset(request: StrategyPreset):
+    """
+    새 전략 프리셋 생성 (Phase 3)
+
+    Args:
+        request (StrategyPreset): 프리셋 정보
+
+    Returns:
+        StrategyPresetResponse: 생성된 프리셋
+
+    Raises:
+        HTTPException: 유효하지 않은 입력
+
+    예제:
+        curl -X POST http://localhost:8000/api/strategies/presets \\
+            -H "Content-Type: application/json" \\
+            -d '{
+              "name": "conservative",
+              "strategy": "volume_long_candle",
+              "params": {"vol_ma_window": 20, "vol_multiplier": 1.5, "body_pct": 0.01},
+              "description": "보수적 전략 프리셋"
+            }'
+    """
+    try:
+        preset = StrategyPresetManager.save_preset(
+            data_root=DATA_ROOT,
+            name=request.name,
+            strategy=request.strategy,
+            params=request.params,
+            description=request.description,
+        )
+        logger.info(f"Created strategy preset: {request.name}")
+        return StrategyPresetResponse(**preset)
+    except ValueError as e:
+        logger.warning(f"Invalid preset data: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error creating strategy preset: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create preset: {str(e)}",
+        )
+
+
+@app.put(
+    "/api/strategies/presets/{name}",
+    response_model=StrategyPresetResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_strategy_preset(name: str, request: StrategyPreset):
+    """
+    전략 프리셋 업데이트 (Phase 3)
+
+    Args:
+        name (str): 프리셋 이름
+        request (StrategyPreset): 업데이트할 정보
+
+    Returns:
+        StrategyPresetResponse: 업데이트된 프리셋
+
+    Raises:
+        HTTPException: 프리셋을 찾을 수 없음
+
+    예제:
+        curl -X PUT http://localhost:8000/api/strategies/presets/conservative \\
+            -H "Content-Type: application/json" \\
+            -d '{
+              "name": "conservative",
+              "strategy": "volume_long_candle",
+              "params": {"vol_ma_window": 25, "vol_multiplier": 1.8, "body_pct": 0.02},
+              "description": "업데이트된 보수적 전략"
+            }'
+    """
+    try:
+        preset = StrategyPresetManager.update_preset(
+            data_root=DATA_ROOT,
+            name=name,
+            strategy=request.strategy,
+            params=request.params,
+            description=request.description,
+        )
+        logger.info(f"Updated strategy preset: {name}")
+        return StrategyPresetResponse(**preset)
+    except ValueError as e:
+        logger.warning(f"Preset not found or invalid data: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error updating strategy preset '{name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update preset: {str(e)}",
+        )
+
+
+@app.delete(
+    "/api/strategies/presets/{name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_strategy_preset(name: str):
+    """
+    전략 프리셋 삭제 (Phase 3)
+
+    Args:
+        name (str): 프리셋 이름
+
+    Raises:
+        HTTPException: 프리셋을 찾을 수 없음
+
+    예제:
+        curl -X DELETE http://localhost:8000/api/strategies/presets/conservative
+    """
+    try:
+        StrategyPresetManager.delete_preset(DATA_ROOT, name)
+        logger.info(f"Deleted strategy preset: {name}")
+        return None
+    except ValueError as e:
+        logger.warning(f"Preset not found: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error deleting strategy preset '{name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete preset: {str(e)}",
         )
