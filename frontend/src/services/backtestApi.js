@@ -121,3 +121,20 @@ export async function downloadBacktestAsCSV(runId) {
     throw error
   }
 }
+
+/**
+ * 백테스트 상세 결과 조회 (비교용)
+ *
+ * @param {string} runId - 실행 ID
+ * @returns {Promise<Object>} 백테스트 상세 결과 (BacktestResponse)
+ * @throws {Error} API 요청 실패
+ */
+export async function fetchBacktestDetail(runId) {
+  try {
+    const response = await axios.get(`${API_BASE}/${runId}/download`)
+    return response.data
+  } catch (error) {
+    console.error(`Failed to fetch backtest detail for '${runId}':`, error)
+    throw error
+  }
+}

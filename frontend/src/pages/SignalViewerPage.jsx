@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { formatDateTime, formatNumber, formatPercent } from '../utils/formatters'
 import SignalsTable from '../components/SignalsTable'
+import CompareResultsModal from '../components/CompareResultsModal'
 import {
   fetchLatestBacktest,
   fetchBacktestHistory,
@@ -115,8 +116,9 @@ function LatestResultCard({ data, loading, error }) {
 /**
  * HistoryTable - 백테스트 히스토리를 페이지네이션과 함께 표시
  */
-function HistoryTable({ historyData, loading, error, onPageChange }) {
+function HistoryTable({ historyData, loading, error, onPageChange, onCompare }) {
   const [selectedResult, setSelectedResult] = useState(null)
+  const [selectedForComparison, setSelectedForComparison] = useState(new Set())
 
   if (loading) {
     return (
@@ -165,13 +167,53 @@ function HistoryTable({ historyData, loading, error, onPageChange }) {
     }
   }
 
+  const handleSelectForComparison = (runId) => {
+    const newSelected = new Set(selectedForComparison)
+    if (newSelected.has(runId)) {
+      newSelected.delete(runId)
+    } else {
+      // 최대 3개까지만 선택 가능
+      if (newSelected.size < 3) {
+        newSelected.add(runId)
+      }
+    }
+    setSelectedForComparison(newSelected)
+  }
+
+  const handleCompareClick = () => {
+    const selectedItems = items.filter(item => selectedForComparison.has(item.run_id))
+    if (selectedItems.length >= 2) {
+      onCompare(selectedItems)
+      setSelectedForComparison(new Set())
+    }
+  }
+
   return (
     <div className="card history-table">
       <h3>히스토리 ({total}개)</h3>
+
+      {/* 비교 선택 헤더 */}
+      {items.length > 0 && (
+        <div className="table-selection-header">
+          <span className="selection-info">
+            선택됨: <span className="count">{selectedForComparison.size}</span> / 3개
+          </span>
+          <button
+            className="compare-btn"
+            onClick={handleCompareClick}
+            disabled={selectedForComparison.size < 2}
+            title={selectedForComparison.size < 2 ? '비교할 항목을 2개 이상 선택해주세요' : '선택된 항목 비교'}
+          >
+            📊 비교하기
+          </button>
+        </div>
+      )}
+
       <div className="table-container">
         <table className="history-table-content">
           <thead>
             <tr>
+              <th className="checkbox-cell">선택</th>
               <th>실행 ID</th>
               <th>전략</th>
               <th>심볼</th>
@@ -185,6 +227,19 @@ function HistoryTable({ historyData, loading, error, onPageChange }) {
           <tbody>
             {items.map(item => (
               <tr key={item.run_id} onClick={() => setSelectedResult(item)}>
+                <td className="checkbox-cell" onClick={(e) => {
+                  e.stopPropagation()
+                  handleSelectForComparison(item.run_id)
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedForComparison.has(item.run_id)}
+                    onChange={(e) => {
+                      e.stopPropagation()
+                      handleSelectForComparison(item.run_id)
+                    }}
+                  />
+                </td>
                 <td className="mono">{item.run_id.substring(0, 12)}...</td>
                 <td>{item.strategy}</td>
                 <td>{item.symbols?.join(', ') || '-'}</td>
@@ -269,6 +324,8 @@ export default function SignalViewerPage() {
   const [historyOffset, setHistoryOffset] = useState(0)
   const [historyLimit] = useState(10)
   const [selectedStrategy, setSelectedStrategy] = useState(null)
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false)
+  const [compareResults, setCompareResults] = useState([])
 
   // useSWR을 사용한 최신 결과 폴링 (5초 간격)
   const { data: latestData, error: latestError, isLoading: latestLoading } = useSWR(
@@ -303,6 +360,11 @@ export default function SignalViewerPage() {
     setHistoryOffset(newOffset)
   }
 
+  const handleCompareResults = (results) => {
+    setCompareResults(results)
+    setIsCompareModalOpen(true)
+  }
+
   return (
     <div className="app">
       <main>
@@ -328,9 +390,17 @@ export default function SignalViewerPage() {
               loading={historyLoading}
               error={historyError}
               onPageChange={handleHistoryPageChange}
+              onCompare={handleCompareResults}
             />
           </section>
         </div>
+
+        {/* 결과 비교 모달 */}
+        <CompareResultsModal
+          isOpen={isCompareModalOpen}
+          onClose={() => setIsCompareModalOpen(false)}
+          results={compareResults}
+        />
       </main>
     </div>
   )

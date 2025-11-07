@@ -65,7 +65,7 @@ export default function App() {
 ## 📄 SignalViewerPage 구현
 
 **파일**: `frontend/src/pages/SignalViewerPage.jsx` (NEW)
-**라인**: 총 347줄
+**라인**: 총 337줄
 
 ### 구조
 
@@ -401,7 +401,7 @@ frontend/
 │   │
 │   ├── pages/
 │   │   ├── BacktestPage.jsx (기존)
-│   │   ├── SignalViewerPage.jsx (NEW - 347줄)
+│   │   ├── SignalViewerPage.jsx (NEW - 337줄)
 │   │   └── DataManagementPage.jsx (기존)
 │   │
 │   ├── components/
@@ -593,4 +593,3 @@ feat(phase2): Implement frontend SignalViewerPage with useSWR polling (Task 3.2)
 **작성자**: Claude Code (AI Assistant)
 **최종 검증**: 2025-11-07
 **검증 환경**: WSL2 Linux, Node.js, React 18.2.0
-
