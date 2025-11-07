@@ -1,0 +1,370 @@
+/**
+ * Chart Styles - Common styles for all chart components
+ *
+ * Task 3.3-4: Chart Extension
+ * This file contains shared styling for Drawdown, Returns Distribution,
+ * and Multi-Symbol chart components.
+ */
+
+/* ============================================
+   CSS Variables - Theme Configuration
+   ============================================ */
+:root {
+  --color-profit: #28a745;
+  --color-loss: #dc3545;
+  --color-neutral: #2c3e50;
+  --color-grid: #e0e0e0;
+  --color-bg-light: #f9f9f9;
+  --color-text-primary: #333;
+  --color-text-secondary: #666;
+  --chart-border-radius: 4px;
+  --chart-padding: 20px;
+  --chart-margin: 20px 0;
+}
+
+/* ============================================
+   Chart Section Container
+   ============================================ */
+.chart-section {
+  margin: var(--chart-margin);
+  padding: var(--chart-padding);
+  background: #fff;
+  border-radius: var(--chart-border-radius);
+  border: 1px solid var(--color-grid);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.chart-section h3 {
+  margin: 0 0 15px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* ============================================
+   Chart Info / Statistics
+   ============================================ */
+.chart-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  margin-bottom: 15px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-grid);
+}
+
+.chart-info span {
+  display: inline-block;
+}
+
+/* ============================================
+   Chart Empty State
+   ============================================ */
+.chart-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-light);
+  border-radius: var(--chart-border-radius);
+  font-size: 14px;
+}
+
+.chart-empty::before {
+  content: "📊 ";
+  display: block;
+  font-size: 28px;
+  margin-bottom: 10px;
+}
+
+/* ============================================
+   Drawdown Chart Specific Styles
+   ============================================ */
+.drawdown-chart-container {
+  width: 100%;
+  height: 300px;
+  position: relative;
+}
+
+.drawdown-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.drawdown-stat-item {
+  padding: 10px;
+  background: var(--color-bg-light);
+  border-radius: var(--chart-border-radius);
+  border-left: 3px solid var(--color-loss);
+}
+
+.drawdown-stat-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.drawdown-stat-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-loss);
+  margin-top: 5px;
+}
+
+/* ============================================
+   Returns Distribution Chart Specific Styles
+   ============================================ */
+.returns-distribution-container {
+  width: 100%;
+  height: 300px;
+  position: relative;
+}
+
+.returns-distribution-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.returns-stat-item {
+  padding: 10px;
+  background: var(--color-bg-light);
+  border-radius: var(--chart-border-radius);
+  border-left: 3px solid var(--color-neutral);
+}
+
+.returns-stat-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.returns-stat-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-top: 5px;
+}
+
+.returns-stat-value.positive {
+  color: var(--color-profit);
+}
+
+.returns-stat-value.negative {
+  color: var(--color-loss);
+}
+
+/* ============================================
+   Multi-Symbol Chart Specific Styles
+   ============================================ */
+.multi-symbol-container {
+  width: 100%;
+  position: relative;
+}
+
+.multi-symbol-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 15px;
+  padding: 10px;
+  background: var(--color-bg-light);
+  border-radius: var(--chart-border-radius);
+}
+
+.multi-symbol-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #fff;
+  border: 1px solid var(--color-grid);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s ease;
+}
+
+.multi-symbol-checkbox:hover {
+  background: #f5f5f5;
+}
+
+.multi-symbol-checkbox input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.multi-symbol-checkbox input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.multi-symbol-checkbox.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.multi-symbol-chart-canvas {
+  width: 100%;
+  height: 350px;
+  position: relative;
+}
+
+.multi-symbol-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.multi-symbol-stat-item {
+  padding: 8px 12px;
+  background: var(--color-bg-light);
+  border-radius: var(--chart-border-radius);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.multi-symbol-stat-item strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+/* ============================================
+   Chart Legend Customization
+   ============================================ */
+.recharts-legend-wrapper {
+  padding-top: 15px !important;
+}
+
+.recharts-legend-item {
+  font-size: 13px;
+}
+
+/* ============================================
+   Chart Tooltip Customization
+   ============================================ */
+.recharts-tooltip {
+  background: #fff;
+  border: 1px solid var(--color-grid);
+  border-radius: var(--chart-border-radius);
+  padding: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.recharts-tooltip-wrapper {
+  outline: none;
+}
+
+/* ============================================
+   Responsive Design
+   ============================================ */
+@media (max-width: 768px) {
+  .chart-section {
+    padding: 15px;
+  }
+
+  .chart-section h3 {
+    font-size: 15px;
+  }
+
+  .drawdown-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .returns-distribution-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-info {
+    flex-direction: column;
+    gap: 5px;
+    align-items: flex-start;
+  }
+
+  .multi-symbol-selector {
+    flex-direction: column;
+  }
+
+  .multi-symbol-checkbox {
+    width: 100%;
+  }
+
+  .drawdown-chart-container,
+  .returns-distribution-container {
+    height: 250px;
+  }
+
+  .multi-symbol-chart-canvas {
+    height: 300px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chart-section {
+    padding: 10px;
+    margin: 10px 0;
+  }
+
+  .chart-section h3 {
+    font-size: 14px;
+  }
+
+  .chart-info {
+    font-size: 12px;
+  }
+
+  .drawdown-stat-value,
+  .returns-stat-value {
+    font-size: 14px;
+  }
+
+  .multi-symbol-selector {
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .multi-symbol-checkbox {
+    font-size: 12px;
+    padding: 5px 8px;
+  }
+
+  .drawdown-chart-container,
+  .returns-distribution-container {
+    height: 200px;
+  }
+
+  .multi-symbol-chart-canvas {
+    height: 250px;
+  }
+}
+
+/* ============================================
+   Dark Theme Support (Future)
+   ============================================ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-text-primary: #e0e0e0;
+    --color-text-secondary: #999;
+    --color-bg-light: #2a2a2a;
+  }
+
+  .chart-section {
+    background: #1e1e1e;
+    border-color: #333;
+  }
+
+  .multi-symbol-checkbox {
+    background: #1e1e1e;
+    border-color: #333;
+  }
+
+  .multi-symbol-checkbox:hover {
+    background: #2a2a2a;
+  }
+}

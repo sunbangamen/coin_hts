@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import './App.css'
+import './styles/charts.css'
 import Navigation from './components/Navigation'
 import BacktestPage from './pages/BacktestPage'
 import SignalViewerPage from './pages/SignalViewerPage'
