@@ -6,6 +6,7 @@ Coin Backtesting API
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, validator
 from typing import List, Dict, Optional, Any
 from datetime import datetime
@@ -18,6 +19,8 @@ import time
 from backend.app.data_loader import load_ohlcv_data
 from backend.app.strategy_factory import StrategyFactory
 from backend.app.task_manager import TaskManager, TaskStatus
+from backend.app.result_manager import ResultManager
+from backend.app.strategy_preset_manager import StrategyPresetManager
 # from backend.app.jobs import run_backtest_job  # Removed: not used in new architecture
 from rq import Queue
 from backend.app.config import redis_conn
@@ -410,6 +413,9 @@ async def root():
             "POST /api/backtests/run": "Run backtest (synchronous)",
             "POST /api/backtests/run-async": "Run backtest (asynchronous, returns task_id)",
             "GET /api/backtests/{run_id}": "Get backtest result",
+            "GET /api/backtests/latest": "Get latest backtest result (Phase 2)",
+            "GET /api/backtests/history": "Get backtest history with pagination (Phase 2)",
+            "GET /api/backtests/{run_id}/download": "Download backtest result as JSON (Phase 2)",
             "GET /api/backtests/status/{task_id}": "Get async task status",
             "GET /api/strategies": "List supported strategies",
             "GET /health": "Health check",
@@ -641,12 +647,17 @@ async def run_backtest(request: BacktestRequest):
             description=None,  # 선택적 필드
         )
 
-        # 결과를 JSON 파일로 저장
-        result_file = os.path.join(RESULTS_DIR, f"{run_id}.json")
+        # 결과를 JSON 파일로 저장 및 인덱스 업데이트
         try:
-            with open(result_file, "w", encoding="utf-8") as f:
-                json.dump(response.dict(), f, indent=2, ensure_ascii=False)
-            logger.info(f"[{run_id}] Result saved to {result_file}")
+            if not ResultManager.save_result(DATA_ROOT, run_id, response.dict()):
+                logger.error(f"[{run_id}] Failed to save result via ResultManager")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to save result",
+                )
+            logger.info(f"[{run_id}] Result saved and indexed")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"[{run_id}] Failed to save result file: {e}")
             raise HTTPException(
@@ -669,6 +680,251 @@ async def run_backtest(request: BacktestRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/backtests/latest",
+    response_model=BacktestResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_latest_backtest():
+    """
+    최신 백테스트 결과 조회 (Phase 2)
+
+    가장 최근에 실행된 백테스트 결과를 반환합니다.
+
+    Returns:
+        BacktestResponse: 최신 백테스트 결과
+
+    Raises:
+        HTTPException: 결과를 찾을 수 없음 (404)
+    """
+    try:
+        latest_run_id = ResultManager.get_latest_run_id(DATA_ROOT)
+
+        if not latest_run_id:
+            logger.warning("No backtest results found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No backtest results found",
+            )
+
+        logger.info(f"Retrieving latest backtest: {latest_run_id}")
+
+        result_data = ResultManager.get_result(DATA_ROOT, latest_run_id)
+        if not result_data:
+            logger.warning(f"Latest result not found: {latest_run_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Latest backtest result not found",
+            )
+
+        logger.info(f"Latest result retrieved: {latest_run_id}")
+        return BacktestResponse(**result_data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving latest backtest: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve latest backtest: {str(e)}",
+        )
+
+
+class BacktestHistoryItem(BaseModel):
+    """백테스트 히스토리 항목 (Phase 2)"""
+    run_id: str = Field(..., description="실행 ID")
+    strategy: str = Field(..., description="전략명")
+    symbols: List[str] = Field(..., description="심볼 목록")
+    start_date: str = Field(..., description="시작 날짜")
+    end_date: str = Field(..., description="종료 날짜")
+    timeframe: str = Field(..., description="타임프레임")
+    total_signals: int = Field(..., description="총 신호 개수")
+    execution_time: float = Field(..., description="실행 시간 (초)")
+    timestamp: str = Field(..., description="실행 시간 (ISO 8601, UTC)")
+
+
+class BacktestHistoryResponse(BaseModel):
+    """백테스트 히스토리 응답 (Phase 2)"""
+    total: int = Field(..., description="전체 항목 수")
+    limit: int = Field(..., description="페이지 크기")
+    offset: int = Field(..., description="시작 위치")
+    items: List[BacktestHistoryItem] = Field(..., description="히스토리 항목 배열")
+
+
+class StrategyPreset(BaseModel):
+    """전략 프리셋 (Phase 3)"""
+    name: str = Field(..., description="프리셋 이름", min_length=1, max_length=100)
+    strategy: str = Field(..., description="전략명")
+    params: Dict[str, Any] = Field(..., description="전략 파라미터")
+    description: str = Field("", description="프리셋 설명")
+
+
+class StrategyPresetResponse(BaseModel):
+    """전략 프리셋 응답 (Phase 3)"""
+    name: str = Field(..., description="프리셋 이름")
+    strategy: str = Field(..., description="전략명")
+    params: Dict[str, Any] = Field(..., description="전략 파라미터")
+    description: str = Field(..., description="프리셋 설명")
+    created_at: str = Field(..., description="생성 시간 (ISO 8601, UTC)")
+    updated_at: str = Field(..., description="업데이트 시간 (ISO 8601, UTC)")
+
+
+@app.get(
+    "/api/backtests/history",
+    response_model=BacktestHistoryResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_backtest_history(
+    limit: int = 10,
+    offset: int = 0,
+    strategy: Optional[str] = None,
+    min_return: Optional[float] = None,
+    max_return: Optional[float] = None,
+    min_signals: Optional[int] = None,
+    max_signals: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    """
+    백테스트 히스토리 조회 (Phase 2 + Task 3.3-3 고급 필터링)
+
+    페이지네이션 및 고급 필터링을 지원하는 백테스트 히스토리 목록을 반환합니다.
+
+    Args:
+        limit: 조회 개수 (기본: 10, 최대: 100)
+        offset: 시작 위치 (기본: 0)
+        strategy: 전략명 필터 (선택사항)
+        min_return: 최소 평균 수익률 (%, 선택사항)
+        max_return: 최대 평균 수익률 (%, 선택사항)
+        min_signals: 최소 신호 개수 (선택사항)
+        max_signals: 최대 신호 개수 (선택사항)
+        date_from: 시작 날짜 필터 (YYYY-MM-DD, 선택사항)
+        date_to: 종료 날짜 필터 (YYYY-MM-DD, 선택사항)
+
+    Returns:
+        BacktestHistoryResponse: 히스토리 목록 및 메타데이터 (필터 적용됨)
+
+    Raises:
+        HTTPException: 쿼리 매개변수 오류 또는 필터 범위 오류
+    """
+    try:
+        # 제한값 설정
+        limit = min(max(limit, 1), 100)  # 1 ~ 100
+        offset = max(offset, 0)
+
+        # 필터 범위 검증
+        if min_return is not None and max_return is not None:
+            if min_return > max_return:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="min_return cannot be greater than max_return",
+                )
+
+        if min_signals is not None and max_signals is not None:
+            if min_signals > max_signals:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="min_signals cannot be greater than max_signals",
+                )
+
+        if date_from is not None and date_to is not None:
+            if date_from > date_to:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="date_from cannot be greater than date_to",
+                )
+
+        logger.info(
+            f"Retrieving backtest history with filters: "
+            f"limit={limit}, offset={offset}, strategy={strategy}, "
+            f"min_return={min_return}, max_return={max_return}, "
+            f"min_signals={min_signals}, max_signals={max_signals}, "
+            f"date_from={date_from}, date_to={date_to}"
+        )
+
+        history = ResultManager.get_history(
+            data_root=DATA_ROOT,
+            limit=limit,
+            offset=offset,
+            strategy=strategy,
+            min_return=min_return,
+            max_return=max_return,
+            min_signals=min_signals,
+            max_signals=max_signals,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        # Pydantic 모델로 변환
+        items = [BacktestHistoryItem(**item) for item in history["items"]]
+
+        logger.info(f"History retrieved: total={history['total']}, items={len(items)}")
+
+        return BacktestHistoryResponse(
+            total=history["total"],
+            limit=history["limit"],
+            offset=history["offset"],
+            items=items,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving backtest history: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve backtest history: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/backtests/{run_id}/download",
+    status_code=status.HTTP_200_OK,
+)
+async def download_backtest_result(run_id: str):
+    """
+    백테스트 결과 파일 다운로드 (Phase 2)
+
+    JSON 형식의 결과 파일을 다운로드합니다.
+
+    Args:
+        run_id: 실행 ID
+
+    Returns:
+        FileResponse: 결과 JSON 파일
+
+    Raises:
+        HTTPException: 파일을 찾을 수 없음 (404)
+    """
+    try:
+        result_file = os.path.join(RESULTS_DIR, f"{run_id}.json")
+
+        if not os.path.exists(result_file):
+            logger.warning(f"Download file not found: {run_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Backtest result not found: {run_id}",
+            )
+
+        logger.info(f"Downloading backtest result: {run_id}")
+
+        return FileResponse(
+            path=result_file,
+            filename=f"backtest_{run_id}.json",
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="backtest_{run_id}.json"'},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading backtest result {run_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download backtest result: {str(e)}",
         )
 
 
@@ -1415,4 +1671,215 @@ async def trigger_scheduler_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=result['error']
+        )
+
+
+# ============================================================================
+# 전략 프리셋 관리 API (Phase 3)
+# ============================================================================
+
+@app.get(
+    "/api/strategies/presets",
+    response_model=List[StrategyPresetResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def list_strategy_presets():
+    """
+    모든 전략 프리셋 조회 (Phase 3)
+
+    Returns:
+        List[StrategyPresetResponse]: 프리셋 목록 (생성일 역순)
+
+    예제:
+        curl http://localhost:8000/api/strategies/presets
+    """
+    try:
+        presets = StrategyPresetManager.get_all_presets(DATA_ROOT)
+        logger.info(f"Retrieved {len(presets)} strategy presets")
+        return [StrategyPresetResponse(**p) for p in presets]
+    except Exception as e:
+        logger.error(f"Error listing strategy presets: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list presets: {str(e)}",
+        )
+
+
+@app.get(
+    "/api/strategies/presets/{name}",
+    response_model=StrategyPresetResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_strategy_preset(name: str):
+    """
+    특정 전략 프리셋 조회 (Phase 3)
+
+    Args:
+        name (str): 프리셋 이름
+
+    Returns:
+        StrategyPresetResponse: 프리셋 상세 정보
+
+    Raises:
+        HTTPException: 프리셋을 찾을 수 없음
+
+    예제:
+        curl http://localhost:8000/api/strategies/presets/conservative
+    """
+    try:
+        preset = StrategyPresetManager.get_preset(DATA_ROOT, name)
+        if not preset:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Strategy preset '{name}' not found",
+            )
+        logger.info(f"Retrieved strategy preset: {name}")
+        return StrategyPresetResponse(**preset)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting strategy preset '{name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get preset: {str(e)}",
+        )
+
+
+@app.post(
+    "/api/strategies/presets",
+    response_model=StrategyPresetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_strategy_preset(request: StrategyPreset):
+    """
+    새 전략 프리셋 생성 (Phase 3)
+
+    Args:
+        request (StrategyPreset): 프리셋 정보
+
+    Returns:
+        StrategyPresetResponse: 생성된 프리셋
+
+    Raises:
+        HTTPException: 유효하지 않은 입력
+
+    예제:
+        curl -X POST http://localhost:8000/api/strategies/presets \\
+            -H "Content-Type: application/json" \\
+            -d '{
+              "name": "conservative",
+              "strategy": "volume_long_candle",
+              "params": {"vol_ma_window": 20, "vol_multiplier": 1.5, "body_pct": 0.01},
+              "description": "보수적 전략 프리셋"
+            }'
+    """
+    try:
+        preset = StrategyPresetManager.save_preset(
+            data_root=DATA_ROOT,
+            name=request.name,
+            strategy=request.strategy,
+            params=request.params,
+            description=request.description,
+        )
+        logger.info(f"Created strategy preset: {request.name}")
+        return StrategyPresetResponse(**preset)
+    except ValueError as e:
+        logger.warning(f"Invalid preset data: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error creating strategy preset: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create preset: {str(e)}",
+        )
+
+
+@app.put(
+    "/api/strategies/presets/{name}",
+    response_model=StrategyPresetResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def update_strategy_preset(name: str, request: StrategyPreset):
+    """
+    전략 프리셋 업데이트 (Phase 3)
+
+    Args:
+        name (str): 프리셋 이름
+        request (StrategyPreset): 업데이트할 정보
+
+    Returns:
+        StrategyPresetResponse: 업데이트된 프리셋
+
+    Raises:
+        HTTPException: 프리셋을 찾을 수 없음
+
+    예제:
+        curl -X PUT http://localhost:8000/api/strategies/presets/conservative \\
+            -H "Content-Type: application/json" \\
+            -d '{
+              "name": "conservative",
+              "strategy": "volume_long_candle",
+              "params": {"vol_ma_window": 25, "vol_multiplier": 1.8, "body_pct": 0.02},
+              "description": "업데이트된 보수적 전략"
+            }'
+    """
+    try:
+        preset = StrategyPresetManager.update_preset(
+            data_root=DATA_ROOT,
+            name=name,
+            strategy=request.strategy,
+            params=request.params,
+            description=request.description,
+        )
+        logger.info(f"Updated strategy preset: {name}")
+        return StrategyPresetResponse(**preset)
+    except ValueError as e:
+        logger.warning(f"Preset not found or invalid data: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error updating strategy preset '{name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update preset: {str(e)}",
+        )
+
+
+@app.delete(
+    "/api/strategies/presets/{name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_strategy_preset(name: str):
+    """
+    전략 프리셋 삭제 (Phase 3)
+
+    Args:
+        name (str): 프리셋 이름
+
+    Raises:
+        HTTPException: 프리셋을 찾을 수 없음
+
+    예제:
+        curl -X DELETE http://localhost:8000/api/strategies/presets/conservative
+    """
+    try:
+        StrategyPresetManager.delete_preset(DATA_ROOT, name)
+        logger.info(f"Deleted strategy preset: {name}")
+        return None
+    except ValueError as e:
+        logger.warning(f"Preset not found: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error deleting strategy preset '{name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete preset: {str(e)}",
         )

@@ -11,6 +11,9 @@ export default function Navigation() {
         <Link to="/" className="nav-link">
           백테스트
         </Link>
+        <Link to="/viewer" className="nav-link">
+          시그널 뷰어
+        </Link>
         <Link to="/data" className="nav-link">
           데이터 관리
         </Link>

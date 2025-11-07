@@ -1,6 +1,9 @@
 import React from 'react';
 import { formatPercent, formatNumber } from '../utils/formatters';
 import SignalsTable from './SignalsTable';
+import DrawdownChart from './DrawdownChart';
+import ReturnsDistributionChart from './ReturnsDistributionChart';
+import MultiSymbolChart from './MultiSymbolChart';
 import {
   LineChart,
   Line,
@@ -372,6 +375,16 @@ const BacktestResults = ({ result = null, loading = false, error = null }) => {
       {renderInfoSection()}
       {renderMetricsSection()}
       {renderEquityCurveChart()}
+      {/* Task 3.3-4: Drawdown Chart */}
+      {result?.symbols?.[0]?.performance_curve && (
+        <DrawdownChart performanceData={result.symbols[0].performance_curve} />
+      )}
+      {/* Task 3.3-4: Returns Distribution Chart */}
+      {result?.symbols?.[0]?.signals && (
+        <ReturnsDistributionChart signals={result.symbols[0].signals} />
+      )}
+      {/* Task 3.3-4: Multi-Symbol Chart */}
+      {result?.symbols && <MultiSymbolChart symbols={result.symbols} />}
       {renderSignalsSection()}
     </div>
   );

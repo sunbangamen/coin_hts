@@ -2,6 +2,7 @@ import { useState } from 'react'
 import axios from 'axios'
 import '../App.css'
 import BacktestResults from '../components/BacktestResults'
+import StrategyPresetModal from '../components/StrategyPresetModal'
 import {
   validateSymbols,
   validateDateRange,
@@ -109,6 +110,9 @@ export default function BacktestPage() {
   const [result, setResult] = useState(null)
   const [showResult, setShowResult] = useState(false)
 
+  // Preset modal state
+  const [isPresetModalOpen, setIsPresetModalOpen] = useState(false)
+
   /**
    * Perform real-time validation and update errors
    * Called after form data changes
@@ -149,6 +153,74 @@ export default function BacktestPage() {
     setFormData(updatedFormData)
     setApiError(null)
     performRealTimeValidation(updatedFormData)
+  }
+
+  // Handle preset modal selection
+  const handlePresetSelect = (presetName, presetData) => {
+    const updatedFormData = {
+      ...formData,
+      strategy: presetData.strategy,
+      params: { ...presetData.params }
+    }
+    setFormData(updatedFormData)
+    setApiError(null)
+    performRealTimeValidation(updatedFormData)
+    setIsPresetModalOpen(false)
+  }
+
+  // Handle preset run immediately (프리셋으로 바로 실행)
+  const handlePresetRunImmediately = async (preset) => {
+    try {
+      setApiError(null)
+
+      // 프리셋 데이터를 폼에 적용
+      const updatedFormData = {
+        ...formData,
+        strategy: preset.strategy,
+        params: { ...preset.params }
+      }
+      setFormData(updatedFormData)
+
+      // 유효성 검증
+      const validation = validateBacktestRequest({
+        symbols: formData.symbols,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        strategy: preset.strategy,
+        params: preset.params
+      })
+
+      if (!validation.isValid) {
+        setApiError('프리셋 적용 후 필수 항목을 확인하세요: 심볼, 기간이 필요합니다')
+        setIsPresetModalOpen(false)
+        return
+      }
+
+      // 백테스트 실행
+      setLoading(true)
+      const symbolList = validateSymbols(formData.symbols).symbols
+      const requestData = {
+        strategy: preset.strategy,
+        symbols: symbolList,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        timeframe: formData.timeframe,
+        params: preset.params
+      }
+
+      const response = await axios.post('/api/backtests/run', requestData)
+      setResult(response.data)
+      setShowResult(true)
+      setIsPresetModalOpen(false)
+    } catch (error) {
+      setApiError(
+        error.response?.data?.detail ||
+        error.message ||
+        '프리셋 실행 중 오류가 발생했습니다'
+      )
+    } finally {
+      setLoading(false)
+    }
   }
 
   // Handle general input change with real-time validation
@@ -296,7 +368,17 @@ export default function BacktestPage() {
 
             {/* Strategy Presets */}
             <div className="presets-section">
-              <label>🎯 추천 프리셋 (파라미터 자동 설정)</label>
+              <div className="presets-header">
+                <label>🎯 추천 프리셋 (파라미터 자동 설정)</label>
+                <button
+                  type="button"
+                  className="preset-manage-btn"
+                  onClick={() => setIsPresetModalOpen(true)}
+                  title="저장된 프리셋 관리"
+                >
+                  ⚙️ 프리셋 관리
+                </button>
+              </div>
               <div className="presets-buttons">
                 {Object.entries(STRATEGY_PRESETS).map(([key, preset]) => (
                   <button
@@ -458,6 +540,16 @@ export default function BacktestPage() {
           />
         </div>
       </main>
+
+      {/* Preset Modal */}
+      <StrategyPresetModal
+        isOpen={isPresetModalOpen}
+        onClose={() => setIsPresetModalOpen(false)}
+        onPresetSelect={handlePresetSelect}
+        onPresetRunImmediately={handlePresetRunImmediately}
+        currentStrategy={formData.strategy}
+        currentParams={formData.params}
+      />
     </div>
   )
 }

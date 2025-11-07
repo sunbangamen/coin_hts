@@ -306,3 +306,165 @@ class TestResultManager:
 
         # 파일이 삭제되지 않았는지 확인
         assert os.path.exists(manifest_file)
+
+    def test_save_result(self, temp_data_root):
+        """Phase 2: 결과 저장 및 인덱스 업데이트 테스트"""
+        run_id = "test-run-123"
+        result_data = {
+            "version": "1.1.0",
+            "run_id": run_id,
+            "strategy": "volume_zone_breakout",
+            "symbols": [
+                {"symbol": "BTC_KRW"},
+                {"symbol": "ETH_KRW"},
+            ],
+            "start_date": "2024-01-01",
+            "end_date": "2024-12-31",
+            "timeframe": "1d",
+            "total_signals": 25,
+            "execution_time": 5.5,
+        }
+
+        # 결과 저장
+        success = ResultManager.save_result(temp_data_root, run_id, result_data)
+
+        assert success is True
+
+        # 결과 파일이 생성되었는지 확인
+        result_file = os.path.join(temp_data_root, "results", f"{run_id}.json")
+        assert os.path.exists(result_file)
+
+        # 인덱스 파일이 생성되었는지 확인
+        index_file = os.path.join(temp_data_root, "results", "index.json")
+        assert os.path.exists(index_file)
+
+        # 인덱스 내용 검증
+        with open(index_file, "r") as f:
+            index_data = json.load(f)
+
+        assert "items" in index_data
+        assert len(index_data["items"]) == 1
+        assert index_data["items"][0]["run_id"] == run_id
+        assert index_data["items"][0]["strategy"] == "volume_zone_breakout"
+
+    def test_get_latest_run_id(self, temp_data_root):
+        """Phase 2: 최신 실행 ID 조회 테스트"""
+        # 여러 결과 저장
+        run_ids = ["run-001", "run-002", "run-003"]
+        for run_id in run_ids:
+            result_data = {
+                "run_id": run_id,
+                "strategy": "volume_zone_breakout",
+                "total_signals": 10,
+                "execution_time": 2.0,
+            }
+            ResultManager.save_result(temp_data_root, run_id, result_data)
+
+        # 최신 실행 ID 조회
+        latest = ResultManager.get_latest_run_id(temp_data_root)
+
+        # run-003이 가장 최근이어야 함
+        assert latest == "run-003"
+
+    def test_get_history(self, temp_data_root):
+        """Phase 2: 히스토리 조회 테스트 (페이지네이션)"""
+        # 3개의 결과 저장
+        for i in range(3):
+            run_id = f"run-{i:03d}"
+            result_data = {
+                "run_id": run_id,
+                "strategy": "volume_zone_breakout" if i % 2 == 0 else "volume_long_candle",
+                "total_signals": 10 + i,
+                "execution_time": 2.0 + i,
+            }
+            ResultManager.save_result(temp_data_root, run_id, result_data)
+
+        # 페이지네이션 테스트 (limit=2, offset=0)
+        history = ResultManager.get_history(temp_data_root, limit=2, offset=0)
+
+        assert history["total"] == 3
+        assert history["limit"] == 2
+        assert history["offset"] == 0
+        assert len(history["items"]) == 2
+
+        # offset=2로 다음 페이지 조회
+        history2 = ResultManager.get_history(temp_data_root, limit=2, offset=2)
+        assert len(history2["items"]) == 1
+
+    def test_get_history_with_strategy_filter(self, temp_data_root):
+        """Phase 2: 전략 필터를 이용한 히스토리 조회 테스트"""
+        # 서로 다른 전략의 결과 저장
+        strategies = ["volume_zone_breakout", "volume_long_candle", "volume_zone_breakout"]
+        for i, strategy in enumerate(strategies):
+            run_id = f"run-{i:03d}"
+            result_data = {
+                "run_id": run_id,
+                "strategy": strategy,
+                "total_signals": 10,
+                "execution_time": 2.0,
+            }
+            ResultManager.save_result(temp_data_root, run_id, result_data)
+
+        # volume_zone_breakout 전략으로 필터링
+        history = ResultManager.get_history(
+            temp_data_root,
+            limit=10,
+            offset=0,
+            strategy="volume_zone_breakout",
+        )
+
+        assert history["total"] == 2  # 2개만 해당 전략
+        assert all(item["strategy"] == "volume_zone_breakout" for item in history["items"])
+
+    def test_get_result(self, temp_data_root):
+        """Phase 2: 특정 실행 결과 조회 테스트"""
+        run_id = "test-run-get-result"
+        result_data = {
+            "version": "1.1.0",
+            "run_id": run_id,
+            "strategy": "volume_zone_breakout",
+            "total_signals": 25,
+            "execution_time": 5.5,
+        }
+
+        # 결과 저장
+        ResultManager.save_result(temp_data_root, run_id, result_data)
+
+        # 결과 조회
+        retrieved = ResultManager.get_result(temp_data_root, run_id)
+
+        assert retrieved is not None
+        assert retrieved["version"] == "1.1.0"
+        assert retrieved["run_id"] == run_id
+        assert retrieved["total_signals"] == 25
+
+    def test_get_result_nonexistent(self, temp_data_root):
+        """Phase 2: 존재하지 않는 결과 조회 테스트"""
+        result = ResultManager.get_result(temp_data_root, "nonexistent-run")
+
+        assert result is None
+
+    def test_save_result_idempotent(self, temp_data_root):
+        """Phase 2: 동일한 run_id로 여러 번 저장해도 인덱스가 중복되지 않는지 테스트"""
+        run_id = "idempotent-test"
+        result_data = {
+            "run_id": run_id,
+            "strategy": "volume_zone_breakout",
+            "total_signals": 10,
+            "execution_time": 2.0,
+        }
+
+        # 두 번 저장
+        ResultManager.save_result(temp_data_root, run_id, result_data)
+        result_data["total_signals"] = 20  # 업데이트된 데이터
+        ResultManager.save_result(temp_data_root, run_id, result_data)
+
+        # 인덱스 확인
+        index_file = os.path.join(temp_data_root, "results", "index.json")
+        with open(index_file, "r") as f:
+            index_data = json.load(f)
+
+        # 동일한 run_id의 항목이 하나만 있어야 함
+        matching_items = [item for item in index_data["items"] if item["run_id"] == run_id]
+        assert len(matching_items) == 1
+        assert matching_items[0]["total_signals"] == 20  # 업데이트된 값

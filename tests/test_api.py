@@ -11,18 +11,24 @@ import json
 import tempfile
 import shutil
 
-from backend.app.main import app, RESULTS_DIR
+from backend.app.main import app, RESULTS_DIR, DATA_ROOT
 
 client = TestClient(app)
 
 
 @pytest.fixture
 def temp_results_dir(monkeypatch):
-    """임시 결과 디렉토리 생성"""
-    temp_dir = tempfile.mkdtemp()
-    monkeypatch.setattr("backend.app.main.RESULTS_DIR", temp_dir)
-    yield temp_dir
-    shutil.rmtree(temp_dir)
+    """임시 결과 디렉토리 생성 (DATA_ROOT와 RESULTS_DIR 모두 monkeypatch)"""
+    temp_root = tempfile.mkdtemp()
+    temp_results = os.path.join(temp_root, "results")
+    os.makedirs(temp_results, exist_ok=True)
+
+    # backend.app.main 모듈의 DATA_ROOT와 RESULTS_DIR를 임시 경로로 치환
+    monkeypatch.setattr("backend.app.main.DATA_ROOT", temp_root)
+    monkeypatch.setattr("backend.app.main.RESULTS_DIR", temp_results)
+
+    yield temp_results
+    shutil.rmtree(temp_root)
 
 
 class TestRootEndpoints:
@@ -338,6 +344,108 @@ class TestErrorHandling:
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 422
+
+
+class TestBacktestHistory:
+    """Phase 2: 백테스트 히스토리 엔드포인트 테스트"""
+
+    def test_get_latest_no_results(self):
+        """최신 결과가 없을 때 테스트"""
+        response = client.get("/api/backtests/latest")
+        # 결과가 없으면 404
+        assert response.status_code in [404, 200]
+
+    def test_get_latest_with_results(self, temp_results_dir):
+        """최신 결과가 있을 때 테스트"""
+        # 백테스트 실행
+        payload = {
+            "strategy": "volume_long_candle",
+            "params": {},
+            "symbols": ["BTC_KRW"],
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+        }
+
+        run_response = client.post("/api/backtests/run", json=payload)
+
+        if run_response.status_code == 200:
+            run_id = run_response.json()["run_id"]
+
+            # 최신 결과 조회
+            response = client.get("/api/backtests/latest")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["run_id"] == run_id
+
+    def test_get_history_empty(self):
+        """빈 히스토리 조회 테스트"""
+        response = client.get("/api/backtests/history")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total" in data
+        assert "limit" in data
+        assert "offset" in data
+        assert "items" in data
+        assert isinstance(data["items"], list)
+
+    def test_get_history_with_pagination(self, temp_results_dir):
+        """페이지네이션이 있는 히스토리 조회 테스트"""
+        # 여러 백테스트 실행
+        for i in range(3):
+            payload = {
+                "strategy": "volume_long_candle" if i % 2 == 0 else "volume_zone_breakout",
+                "params": {},
+                "symbols": ["BTC_KRW"],
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-31",
+            }
+            response = client.post("/api/backtests/run", json=payload)
+            if response.status_code != 200:
+                break
+
+        # 히스토리 조회 (limit=2)
+        response = client.get("/api/backtests/history?limit=2&offset=0")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["limit"] == 2
+        assert data["offset"] == 0
+        assert isinstance(data["items"], list)
+
+    def test_get_history_with_strategy_filter(self, temp_results_dir):
+        """전략 필터를 이용한 히스토리 조회 테스트"""
+        # 히스토리 조회 (strategy 필터)
+        response = client.get("/api/backtests/history?strategy=volume_long_candle")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total" in data
+        assert "items" in data
+
+    def test_download_result(self, temp_results_dir):
+        """결과 다운로드 테스트"""
+        # 백테스트 실행
+        payload = {
+            "strategy": "volume_long_candle",
+            "params": {},
+            "symbols": ["BTC_KRW"],
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+        }
+
+        run_response = client.post("/api/backtests/run", json=payload)
+
+        if run_response.status_code == 200:
+            run_id = run_response.json()["run_id"]
+
+            # 다운로드
+            response = client.get(f"/api/backtests/{run_id}/download")
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "application/json"
+            assert "attachment" in response.headers.get("content-disposition", "")
+
+    def test_download_nonexistent_result(self):
+        """존재하지 않는 결과 다운로드 테스트"""
+        response = client.get("/api/backtests/nonexistent-id/download")
+        assert response.status_code == 404
 
 
 if __name__ == "__main__":
