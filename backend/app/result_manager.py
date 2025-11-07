@@ -369,29 +369,78 @@ class ResultManager:
         limit: int = 10,
         offset: int = 0,
         strategy: Optional[str] = None,
+        min_return: Optional[float] = None,
+        max_return: Optional[float] = None,
+        min_signals: Optional[int] = None,
+        max_signals: Optional[int] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        백테스트 히스토리 조회 (페이지네이션 지원)
+        백테스트 히스토리 조회 (페이지네이션 + 필터링 지원, Task 3.3-3)
 
         Args:
             data_root: 데이터 루트 디렉토리
-            limit: 조회 개수 (기본: 10)
+            limit: 조회 개수 (기본: 10, 최대: 100)
             offset: 시작 위치 (기본: 0)
             strategy: 전략명 필터 (선택사항)
+            min_return: 최소 평균 수익률 (%, 선택사항)
+            max_return: 최대 평균 수익률 (%, 선택사항)
+            min_signals: 최소 신호 개수 (선택사항)
+            max_signals: 최대 신호 개수 (선택사항)
+            date_from: 시작 날짜 필터 (YYYY-MM-DD, 선택사항)
+            date_to: 종료 날짜 필터 (YYYY-MM-DD, 선택사항)
 
         Returns:
             히스토리 dict
-                - total: 전체 항목 수
+                - total: 전체 항목 수 (필터 적용 후)
                 - limit: 조회 개수
                 - offset: 시작 위치
-                - items: 결과 배열
+                - items: 결과 배열 (페이지네이션 적용)
         """
         index_data = ResultManager._read_index(data_root)
         items = index_data.get("items", [])
 
-        # 전략 필터 적용
+        # 1. 전략 필터 적용
         if strategy:
             items = [item for item in items if item.get("strategy") == strategy]
+
+        # 2. 신호 개수 필터 적용
+        if min_signals is not None:
+            items = [item for item in items if item.get("total_signals", 0) >= min_signals]
+        if max_signals is not None:
+            items = [item for item in items if item.get("total_signals", 0) <= max_signals]
+
+        # 3. 기간 필터 적용
+        if date_from:
+            items = [item for item in items if item.get("start_date", "") >= date_from]
+        if date_to:
+            items = [item for item in items if item.get("end_date", "") <= date_to]
+
+        # 4. 수익률 필터 적용 (각 항목의 메타데이터에서 평균 수익률 계산)
+        if min_return is not None or max_return is not None:
+            filtered_items = []
+            for item in items:
+                # 백테스트 결과 파일 읽기 (메모리 효율성을 위해 캐싱 가능)
+                result_file = os.path.join(data_root, f"{item.get('run_id')}.json")
+                try:
+                    if os.path.exists(result_file):
+                        with open(result_file, 'r', encoding='utf-8') as f:
+                            result_data = json.load(f)
+                            # 심볼별 평균 수익률 계산
+                            symbols = result_data.get("symbols", [])
+                            if symbols:
+                                avg_return = sum(s.get("avg_return", 0) for s in symbols) / len(symbols)
+                                # 수익률 필터 확인
+                                if min_return is not None and avg_return < min_return:
+                                    continue
+                                if max_return is not None and avg_return > max_return:
+                                    continue
+                        filtered_items.append(item)
+                except (json.JSONDecodeError, IOError):
+                    # 파일 읽기 실패시 항목 제외
+                    continue
+            items = filtered_items
 
         total = len(items)
         paginated_items = items[offset : offset + limit]

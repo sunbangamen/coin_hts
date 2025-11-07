@@ -781,35 +781,81 @@ async def get_backtest_history(
     limit: int = 10,
     offset: int = 0,
     strategy: Optional[str] = None,
+    min_return: Optional[float] = None,
+    max_return: Optional[float] = None,
+    min_signals: Optional[int] = None,
+    max_signals: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
 ):
     """
-    백테스트 히스토리 조회 (Phase 2)
+    백테스트 히스토리 조회 (Phase 2 + Task 3.3-3 고급 필터링)
 
-    페이지네이션을 지원하는 백테스트 히스토리 목록을 반환합니다.
+    페이지네이션 및 고급 필터링을 지원하는 백테스트 히스토리 목록을 반환합니다.
 
     Args:
         limit: 조회 개수 (기본: 10, 최대: 100)
         offset: 시작 위치 (기본: 0)
         strategy: 전략명 필터 (선택사항)
+        min_return: 최소 평균 수익률 (%, 선택사항)
+        max_return: 최대 평균 수익률 (%, 선택사항)
+        min_signals: 최소 신호 개수 (선택사항)
+        max_signals: 최대 신호 개수 (선택사항)
+        date_from: 시작 날짜 필터 (YYYY-MM-DD, 선택사항)
+        date_to: 종료 날짜 필터 (YYYY-MM-DD, 선택사항)
 
     Returns:
-        BacktestHistoryResponse: 히스토리 목록 및 메타데이터
+        BacktestHistoryResponse: 히스토리 목록 및 메타데이터 (필터 적용됨)
 
     Raises:
-        HTTPException: 쿼리 매개변수 오류
+        HTTPException: 쿼리 매개변수 오류 또는 필터 범위 오류
     """
     try:
         # 제한값 설정
         limit = min(max(limit, 1), 100)  # 1 ~ 100
         offset = max(offset, 0)
 
-        logger.info(f"Retrieving backtest history: limit={limit}, offset={offset}, strategy={strategy}")
+        # 필터 범위 검증
+        if min_return is not None and max_return is not None:
+            if min_return > max_return:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="min_return cannot be greater than max_return",
+                )
+
+        if min_signals is not None and max_signals is not None:
+            if min_signals > max_signals:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="min_signals cannot be greater than max_signals",
+                )
+
+        if date_from is not None and date_to is not None:
+            if date_from > date_to:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="date_from cannot be greater than date_to",
+                )
+
+        logger.info(
+            f"Retrieving backtest history with filters: "
+            f"limit={limit}, offset={offset}, strategy={strategy}, "
+            f"min_return={min_return}, max_return={max_return}, "
+            f"min_signals={min_signals}, max_signals={max_signals}, "
+            f"date_from={date_from}, date_to={date_to}"
+        )
 
         history = ResultManager.get_history(
             data_root=DATA_ROOT,
             limit=limit,
             offset=offset,
             strategy=strategy,
+            min_return=min_return,
+            max_return=max_return,
+            min_signals=min_signals,
+            max_signals=max_signals,
+            date_from=date_from,
+            date_to=date_to,
         )
 
         # Pydantic 모델로 변환
@@ -824,6 +870,8 @@ async def get_backtest_history(
             items=items,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error retrieving backtest history: {e}", exc_info=True)
         raise HTTPException(
