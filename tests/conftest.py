@@ -16,6 +16,43 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 
+# ============================================================================
+# InMemoryRedis 단위 테스트 (실제 테스트 실행 시에만)
+# ============================================================================
+
+def test_in_memory_redis_hset_compatibility():
+    """InMemoryRedis.hset이 Redis 호환성을 갖는지 검증"""
+    redis = InMemoryRedis()
+
+    # 테스트 1: 단일 필드 설정
+    result = redis.hset("test_hash", "field1", "value1")
+    assert result == 1, "단일 필드 추가 시 1 반환"
+    assert redis.hget("test_hash", "field1") == "value1"
+
+    # 테스트 2: 같은 필드 업데이트
+    result = redis.hset("test_hash", "field1", "updated_value")
+    assert result == 0, "기존 필드 업데이트 시 0 반환"
+    assert redis.hget("test_hash", "field1") == "updated_value"
+
+    # 테스트 3: mapping으로 여러 필드 설정
+    result = redis.hset("test_hash", mapping={"field2": "value2", "field3": "value3"})
+    assert result == 2, "mapping으로 2개 필드 추가 시 2 반환"
+    assert redis.hget("test_hash", "field2") == "value2"
+    assert redis.hget("test_hash", "field3") == "value3"
+
+    # 테스트 4: key/value + mapping 동시 설정
+    result = redis.hset("test_hash", "field4", "value4", mapping={"field5": "value5"})
+    assert result == 2, "key/value + mapping으로 2개 필드 추가 시 2 반환"
+    assert redis.hget("test_hash", "field4") == "value4"
+    assert redis.hget("test_hash", "field5") == "value5"
+
+    # 테스트 5: hgetall로 전체 조회
+    all_data = redis.hgetall("test_hash")
+    assert len(all_data) == 5
+    assert all_data["field1"] == "updated_value"
+    assert all_data["field2"] == "value2"
+
+
 class InMemoryRedis:
     """
     메모리 기반 Redis 구현 (테스트용)
@@ -30,23 +67,37 @@ class InMemoryRedis:
         self._ttl = {}  # {key: ttl_seconds} 저장소
 
     def hset(self, name, key=None, value=None, mapping=None):
-        """Hash 필드 설정
+        """Hash 필드 설정 (Redis 호환)
 
-        두 가지 호출 방식 지원:
-        1. hset(name, key, value) - 단일 필드
-        2. hset(name, mapping={...}) - 여러 필드 (Redis 표준)
+        세 가지 호출 방식 지원:
+        1. hset(name, key, value) - 단일 필드 설정
+        2. hset(name, mapping={...}) - 여러 필드 동시 설정
+        3. hset(name, key, value, mapping={...}) - key/value + mapping 동시 설정
+
+        Returns:
+            추가된 필드 수 (새로운 필드만 카운트, 기존 필드 업데이트는 카운트 안 함)
+            Redis 호환: 반환 값은 정확히 추가된 필드 수
         """
         if name not in self._hashes:
             self._hashes[name] = {}
 
+        added_count = 0
+
+        # mapping 방식: 여러 필드 동시 설정 (Redis 표준)
         if mapping is not None:
-            # mapping={field: value, ...} 방식
-            self._hashes[name].update(mapping)
-            return len(mapping)
-        else:
-            # key, value 방식
+            for field, val in mapping.items():
+                if field not in self._hashes[name]:
+                    added_count += 1
+                self._hashes[name][field] = val
+
+        # key/value 방식: 단일 필드 설정
+        if key is not None:
+            if key not in self._hashes[name]:
+                added_count += 1
             self._hashes[name][key] = value
-            return 1
+
+        # 반환값: 정확히 추가된 필드 수 (Redis 호환)
+        return added_count
 
     def hget(self, name, key):
         """Hash 필드 조회"""

@@ -169,10 +169,69 @@ def setup_task_in_redis(in_memory_redis_instance):
     """Redis에 작업 상태 직접 설정"""
     def _setup(task_id, status="queued", progress=0.0):
         task_key = f"task:{task_id}"
-        in_memory_redis_instance.hset(task_key, "status", status)
-        # ...
+        # mapping 파라미터로 여러 필드를 한 번에 설정
+        in_memory_redis_instance.hset(task_key, mapping={
+            "status": status,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "progress": str(progress)
+        })
+        # progress:{task_id} String에도 저장
+        in_memory_redis_instance.set(f"progress:{task_id}", str(progress))
         return task_id
     return _setup
+```
+
+#### D. InMemoryRedis Redis 호환성 강화
+
+**개선 사항**:
+- `hset()` 메서드가 Redis와 동일한 세 가지 호출 방식 지원:
+  1. `hset(name, key, value)` - 단일 필드
+  2. `hset(name, mapping={...})` - 여러 필드 동시 설정
+  3. `hset(name, key, value, mapping={...})` - 둘 다 동시 설정
+
+**구현**:
+```python
+def hset(self, name, key=None, value=None, mapping=None):
+    """Hash 필드 설정 (Redis 호환)"""
+    if name not in self._hashes:
+        self._hashes[name] = {}
+
+    added_count = 0
+
+    # mapping 방식: 여러 필드 동시 설정 (Redis 표준)
+    if mapping is not None:
+        for field, val in mapping.items():
+            if field not in self._hashes[name]:
+                added_count += 1
+            self._hashes[name][field] = val
+
+    # key/value 방식: 단일 필드 설정
+    if key is not None:
+        if key not in self._hashes[name]:
+            added_count += 1
+        self._hashes[name][key] = value
+
+    # Redis 호환: 정확히 추가된 필드 수만 반환
+    return added_count
+```
+
+**테스트 커버리지**:
+```python
+def test_in_memory_redis_hset_compatibility():
+    """InMemoryRedis.hset이 Redis 호환성을 갖는지 검증"""
+    redis = InMemoryRedis()
+
+    # 단일 필드 설정 (추가 → 반환값 1)
+    assert redis.hset("test_hash", "field1", "value1") == 1
+
+    # 같은 필드 업데이트 (업데이트 → 반환값 0)
+    assert redis.hset("test_hash", "field1", "updated") == 0
+
+    # mapping으로 여러 필드 설정 (추가 2개 → 반환값 2)
+    assert redis.hset("test_hash", mapping={"field2": "v2", "field3": "v3"}) == 2
+
+    # key/value + mapping 동시 설정 (추가 2개 → 반환값 2)
+    assert redis.hset("test_hash", "field4", "v4", mapping={"field5": "v5"}) == 2
 ```
 
 **사용 예시**:
