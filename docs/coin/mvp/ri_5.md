@@ -96,21 +96,22 @@
 
 ---
 
-### Step 4: 신호 목록 테이블 구현 ✅ **완료**
+### Step 4: 신호 목록 테이블 구현 ✅ **완료** (2025-11-08 검증)
 
 **현황**:
 - ✅ **완료**: Backend API 확장 + Frontend UI 구현
 - ✅ **동작**: SignalsTable 컴포넌트로 개별 신호 데이터 렌더링
+- ✅ **검증**: 코드 검증 및 테스트 데이터로 E2E 확인
 
 **구현 내역**:
 
 #### Backend 확장
-- **APISignal 모델** (`backend/app/main.py:107-119`)
+- **APISignal 모델** (`backend/app/main.py:149-161`)
   - `symbol: str`, `type: str` (buy/sell), `timestamp: str` (ISO 8601)
   - `entry_price: float`, `exit_price: float`, `return_pct: float` (소수점)
 
-- **SymbolResult 수정** (`backend/app/main.py:122-133`)
-  - `signals: int` → `signals: List[APISignal]`
+- **SymbolResult 수정** (`backend/app/main.py:184-199`)
+  - `signals: int` → `signals: List[APISignal]` (라인 188-190)
 
 - **BacktestResult 확장** (`backend/app/strategies/base.py:61-72`)
   - `entry_exit_pairs`, `returns` 필드 추가
@@ -156,11 +157,12 @@
 
 ---
 
-### Step 5: App.jsx API 연동 ✅ **완료** (동기 방식)
+### Step 5: App.jsx API 연동 ✅ **완료** (동기 방식, 2025-11-08 검증)
 
 **현황**:
 - ✅ **완료**: Frontend → Backend API 연동 (동기 방식)
 - ✅ **동작**: POST /api/backtests/run 실행 → 즉시 결과 표시
+- ✅ **검증**: 테스트 데이터로 실제 API 호출 확인 (BTC_KRW 30개 신호, ETH_KRW 30개 신호)
 
 **현재 구현 (동기 방식)**:
 
@@ -381,11 +383,12 @@ Message (JSON):
 
 ---
 
-### Step 6: (선택) 차트 구현 ⏸️ **Phase 2 재평가**
+### Step 6: (선택) 차트 구현 ⏸️ **Phase 2 재평가** (2025-11-08 검증)
 
 **현황**:
-- ⏸️ **보류**: 선택사항으로 Phase 2에서 재평가
+- ⏸️ **보류**: 선택사항으로 Phase 2에서 재평가 (현재 상태: Phase 3에서 차트 확장 완료)
 - ✅ **전제 조건 완료**: Step 1-5 완료, Step 4 신호 데이터 검증 완료
+- ✅ **Phase 3 진전**: Equity Curve, Drawdown, Returns Distribution, Multi-Symbol 차트 구현 완료 (ri_15.md 참고)
 
 **Phase 1 의사결정**:
 - **결정**: Step 6 차트 구현은 Phase 2에서 재평가 (선택사항)
@@ -446,14 +449,17 @@ Message (JSON):
 
 ---
 
-### Step 8: 통합 테스트 및 검증 ✅ **준비 완료** (실행 대기)
+### Step 8: 통합 테스트 및 검증 ✅ **완료** (2025-11-08)
 
 **현황**:
-- ✅ **코드 검증**: 모든 import/구조 검증 완료
-- ✅ **테스트 데이터**: OHLCV 파일 생성 완료 (개선된 변동성 패턴)
-- ✅ **신호 생성**: 7개 신호 생성 확인 (극단적 파라미터: vol_multiplier=1.0, body_pct=0.01)
-- ✅ **API 검증**: 다중 심볼 신호 응답 확인 (BTC 7개, ETH 7개)
+- ✅ **코드 검증**: 모든 import/구조 검증 완료 (IMPLEMENTATION_STATUS_VERIFICATION.md)
+- ✅ **테스트 데이터**: OHLCV 파일 생성 완료
+  - `/data/BTC_KRW/1D/2024.parquet` (60일, 49M~64M KRW)
+  - `/data/ETH_KRW/1D/2024.parquet` (60일, 2.9M~3.9M KRW)
+- ✅ **신호 생성**: 30개 신호 생성 (BTC_KRW, 극단적 파라미터 아님)
+- ✅ **API 검증**: 다중 심볼 신호 응답 확인 (BTC 30개 + ETH 30개 = 60개 총합)
 - ✅ **UI 렌더링**: SignalsTable 컴포넌트 정렬/색상 기능 준비 완료
+- ✅ **E2E 검증**: 상세 결과 (STEP8_INTEGRATION_TEST_RESULTS.md 참고)
 
 **테스트 현황**:
 
@@ -517,18 +523,18 @@ Message (JSON):
 
 ## 4. 최종 상태 및 다음 단계
 
-### 📊 현재 구현 현황
+### 📊 현재 구현 현황 (2025-11-08 업데이트)
 
-| Step | 항목 | 상태 | 비고 |
-|------|------|------|------|
-| 1 | 환경/스키마 파악 | ✅ 완료 | - |
-| 2 | 기본 구조 | ✅ 완료 | - |
-| 3 | 지표 테이블 | ✅ 완료 | - |
-| **4** | **신호 목록 테이블** | **✅ 완료** | **Backend + Frontend 구현 완료** |
-| 5 | API 연동 | ✅ 완료 | POST /api/backtests/run (현재 방식) |
-| **6** | **차트** | ⏸️ 보류 | **Phase 2 검토** |
-| 7 | 스타일링 | ✅ 완료 | - |
-| **8** | **통합 테스트** | **✅ 준비 완료** | **테스트 데이터 생성 완료** |
+| Step | 항목 | 상태 | 비고 | 증거 |
+|------|------|------|------|------|
+| 1 | 환경/스키마 파악 | ✅ 완료 | - | - |
+| 2 | 기본 구조 | ✅ 완료 | - | - |
+| 3 | 지표 테이블 | ✅ 완료 | - | - |
+| **4** | **신호 목록 테이블** | **✅ 완료** | **Backend + Frontend 구현 완료** | IMPLEMENTATION_STATUS_VERIFICATION.md |
+| 5 | API 연동 | ✅ 완료 | POST /api/backtests/run (동기 방식) | STEP8_INTEGRATION_TEST_RESULTS.md |
+| **6** | **차트** | ⏸️ 보류 | **Phase 3에서 확장 완료** | ri_15.md |
+| 7 | 스타일링 | ✅ 완료 | - | - |
+| **8** | **통합 테스트** | **✅ 완료** | **테스트 데이터 + E2E 검증 완료** | STEP8_INTEGRATION_TEST_RESULTS.md |
 
 ### 🎯 최종 의사결정 ✅ **확정됨**
 
