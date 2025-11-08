@@ -1,6 +1,26 @@
-# Issue #5 구현 진행: 3가지 중요 결정 필요
+# ⚠️ 구버전 문서 (Phase 1 Step 4/5/8 완료 반영)
 
-**상태**: 🟡 분석 완료, 결정 대기
+> **경고**: 이 문서는 2025-11-04에 작성된 구버전입니다. 현재 상태는 Step 4, 5, 8이 모두 완료되었습니다.
+>
+> **최신 정보**:
+> - ✅ Step 4 완료: Backend `APISignal` 모델, Frontend `SignalsTable.jsx` (정렬, 색상)
+> - ✅ Step 5 완료: `POST /api/backtests/run` 동기 방식 (현재 구현 유지)
+> - ✅ Step 8 완료: OHLCV 테스트 데이터 생성 및 E2E 검증
+> - ⏸️ Step 6 보류: Phase 3에서 차트 확장 완료 (단, Step 6 Equity Curve와의 관계 재평가 필요)
+>
+> **상세 증거**:
+> - `IMPLEMENTATION_STATUS_VERIFICATION.md` - 코드 검증 및 파일 경로
+> - `STEP8_INTEGRATION_TEST_RESULTS.md` - 테스트 데이터 및 API 검증
+> - `ri_5.md` - 최신 Step 상태 (이 문서 참고)
+> - `ri_15.md` - Phase 2 완료 상태 (이 문서 참고)
+> - `ri_16.md` - Issue #25 해결 계획 (이 문서 참고)
+
+---
+
+# Issue #5 구현 진행: 3가지 중요 결정 필요 (구버전 - 참고용)
+
+**원본 상태**: 🟡 분석 완료, 결정 대기
+**현재 상태**: ✅ Step 4/5/8 완료
 **분석 자료**: `IMPLEMENTATION_STATUS_ANALYSIS.md` 참고
 
 ---
