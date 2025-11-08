@@ -499,3 +499,183 @@ class TestAsyncEndtoEndScenarios:
         # 5. TaskManager.create_task와 Queue.enqueue 호출 검증
         assert async_api_mocks["create_task"].called
         assert async_api_mocks["queue"].enqueue.called
+
+
+class TestCancelBacktestTask:
+    """작업 취소 엔드포인트 테스트 (Phase 3 추가)
+
+    DELETE /api/backtests/tasks/{task_id} 취소 기능을 테스트합니다.
+    """
+
+    def test_cancel_queued_task_success(self, monkeypatch):
+        """대기 중인 작업 취소 성공"""
+        task_id = str(uuid.uuid4())
+
+        # 초기 상태: queued
+        def mock_get_status_queued(tid):
+            if tid == task_id:
+                return {
+                    "task_id": task_id,
+                    "status": TaskStatus.QUEUED.value,
+                    "progress": 0.0,
+                    "result": None,
+                    "error": None,
+                }
+            return None
+
+        monkeypatch.setattr(
+            "backend.app.main.TaskManager.get_status",
+            mock_get_status_queued
+        )
+
+        # 취소 시도
+        response = client.delete(f"/api/backtests/tasks/{task_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["task_id"] == task_id
+        assert data["status"] == "cancelled"
+        assert "created_at" in data
+
+    def test_cancel_running_task_success(self, monkeypatch):
+        """실행 중인 작업 취소 성공"""
+        task_id = str(uuid.uuid4())
+
+        # 초기 상태: running
+        def mock_get_status_running(tid):
+            if tid == task_id:
+                return {
+                    "task_id": task_id,
+                    "status": TaskStatus.RUNNING.value,
+                    "progress": 0.6,
+                    "result": None,
+                    "error": None,
+                }
+            return None
+
+        monkeypatch.setattr(
+            "backend.app.main.TaskManager.get_status",
+            mock_get_status_running
+        )
+
+        # 취소 시도
+        response = client.delete(f"/api/backtests/tasks/{task_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "cancelled"
+
+    def test_cancel_completed_task_fails(self, monkeypatch):
+        """완료된 작업 취소 실패 (400)"""
+        task_id = str(uuid.uuid4())
+
+        # 상태: completed
+        def mock_get_status_completed(tid):
+            if tid == task_id:
+                return {
+                    "task_id": task_id,
+                    "status": TaskStatus.COMPLETED.value,
+                    "progress": 1.0,
+                    "result": {"run_id": task_id},
+                    "error": None,
+                }
+            return None
+
+        monkeypatch.setattr(
+            "backend.app.main.TaskManager.get_status",
+            mock_get_status_completed
+        )
+
+        # 취소 시도 → 실패 예상
+        response = client.delete(f"/api/backtests/tasks/{task_id}")
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "Cannot cancel" in data["detail"]
+        assert "completed" in data["detail"].lower()
+
+    def test_cancel_failed_task_fails(self, monkeypatch):
+        """실패한 작업 취소 실패 (400)"""
+        task_id = str(uuid.uuid4())
+
+        # 상태: failed
+        def mock_get_status_failed(tid):
+            if tid == task_id:
+                return {
+                    "task_id": task_id,
+                    "status": TaskStatus.FAILED.value,
+                    "progress": 0.5,
+                    "result": None,
+                    "error": "Execution failed",
+                }
+            return None
+
+        monkeypatch.setattr(
+            "backend.app.main.TaskManager.get_status",
+            mock_get_status_failed
+        )
+
+        # 취소 시도 → 실패 예상
+        response = client.delete(f"/api/backtests/tasks/{task_id}")
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "Cannot cancel" in data["detail"]
+
+    def test_cancel_nonexistent_task(self):
+        """존재하지 않는 작업 취소 (404)"""
+        fake_task_id = str(uuid.uuid4())
+
+        response = client.delete(f"/api/backtests/tasks/{fake_task_id}")
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "Task not found" in data["detail"]
+
+    def test_cancel_and_verify_state_consistency(self, monkeypatch):
+        """취소 후 상태 일관성 확인"""
+        task_id = str(uuid.uuid4())
+
+        # 초기: queued
+        call_count = 0
+
+        def mock_get_status_dynamic(tid):
+            nonlocal call_count
+            if tid == task_id:
+                if call_count == 0:
+                    # 첫 번째 호출 (취소 전): queued
+                    call_count += 1
+                    return {
+                        "task_id": task_id,
+                        "status": TaskStatus.QUEUED.value,
+                        "progress": 0.0,
+                        "result": None,
+                        "error": None,
+                    }
+                else:
+                    # 이후 호출 (취소 후): cancelled
+                    return {
+                        "task_id": task_id,
+                        "status": TaskStatus.CANCELLED.value,
+                        "progress": 0.0,
+                        "result": None,
+                        "error": "Task cancelled by user",
+                    }
+            return None
+
+        monkeypatch.setattr(
+            "backend.app.main.TaskManager.get_status",
+            mock_get_status_dynamic
+        )
+
+        # 취소 전 상태 확인
+        response1 = client.get(f"/api/backtests/status/{task_id}")
+        assert response1.json()["status"] == "queued"
+
+        # 취소
+        response2 = client.delete(f"/api/backtests/tasks/{task_id}")
+        assert response2.json()["status"] == "cancelled"
+
+        # 취소 후 상태 확인
+        response3 = client.get(f"/api/backtests/status/{task_id}")
+        assert response3.json()["status"] == "cancelled"
