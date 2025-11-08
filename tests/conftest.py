@@ -29,12 +29,24 @@ class InMemoryRedis:
         self._hashes = {}  # {hash_key: {field: value}} 저장소
         self._ttl = {}  # {key: ttl_seconds} 저장소
 
-    def hset(self, name, key, value):
-        """Hash 필드 설정"""
+    def hset(self, name, key=None, value=None, mapping=None):
+        """Hash 필드 설정
+
+        두 가지 호출 방식 지원:
+        1. hset(name, key, value) - 단일 필드
+        2. hset(name, mapping={...}) - 여러 필드 (Redis 표준)
+        """
         if name not in self._hashes:
             self._hashes[name] = {}
-        self._hashes[name][key] = value
-        return 1
+
+        if mapping is not None:
+            # mapping={field: value, ...} 방식
+            self._hashes[name].update(mapping)
+            return len(mapping)
+        else:
+            # key, value 방식
+            self._hashes[name][key] = value
+            return 1
 
     def hget(self, name, key):
         """Hash 필드 조회"""
@@ -90,14 +102,19 @@ def mock_redis_and_queue():
     - InMemoryRedis를 사용하여 실제 상태 변경을 메모리에 반영
     - TaskManager.cancel_task는 패치하지 않음 (실제 구현 실행)
     - 테스트에서 상태 변경을 검증 가능
+    - run_backtest_job 더미화 (ImportError 방지, Phase 3 임시)
     """
     # 메모리 기반 Redis 인스턴스
     in_memory_redis = InMemoryRedis()
 
+    # run_backtest_job 더미 함수 (backend/app/jobs에 정의되지 않아 임시 patch)
+    mock_run_backtest_job = MagicMock(return_value=None)
+
     with patch("backend.app.config.redis_conn", in_memory_redis), \
          patch("backend.app.main.redis_conn", in_memory_redis), \
          patch("backend.app.task_manager.redis_conn", in_memory_redis), \
-         patch("backend.app.main.rq_queue") as mock_queue:
+         patch("backend.app.main.rq_queue") as mock_queue, \
+         patch("backend.app.jobs.run_backtest_job", mock_run_backtest_job):
 
         # RQ Queue 설정
         mock_job = MagicMock()
@@ -109,6 +126,7 @@ def mock_redis_and_queue():
             "redis": in_memory_redis,
             "queue": mock_queue,
             "job": mock_job,
+            "run_backtest_job": mock_run_backtest_job,
         }
 
 
