@@ -64,13 +64,29 @@ tests/test_async_api.py
 
 **실행 명령어 (작업 검증용)**:
 ```bash
-source venv/bin/activate && python -m pytest tests/test_async_api.py::TestCancelBacktestTask -v
+source venv/bin/activate && PYTHONPATH=. python -m pytest tests/test_async_api.py::TestCancelBacktestTask -v
 ```
 
-**최종 결과** (2025-11-08 17:45 UTC):
+**최종 결과** (2025-11-08 17:45 UTC, 개선 전):
 ```
 ======================== 6 passed, 16 warnings in 0.53s ========================
 ```
+
+**개선 후 실행 (InMemoryRedis + 상태 저장 검증, 2025-11-08 18:00 UTC)**:
+```bash
+source venv/bin/activate && export PYTHONPATH=. && python -m pytest tests/test_async_api.py::TestCancelBacktestTask -v
+```
+
+**개선 후 결과**:
+```
+======================== 6 passed, 24 warnings in 0.87s ========================
+```
+
+**주요 개선사항**:
+1. ✅ InMemoryRedis 헬퍼 클래스로 실제 상태 저장 검증
+2. ✅ TaskManager.cancel_task() 실제 구현 실행 (patch 제거)
+3. ✅ 모든 테스트에 Redis 상태 검증 추가
+4. ✅ PYTHONPATH=. 표준화로 재현성 확보
 
 **테스트 커버리지**:
 - ✅ 대기 중(queued) 작업 취소 성공

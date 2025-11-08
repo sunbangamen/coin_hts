@@ -502,180 +502,130 @@ class TestAsyncEndtoEndScenarios:
 
 
 class TestCancelBacktestTask:
-    """작업 취소 엔드포인트 테스트 (Phase 3 추가)
+    """작업 취소 엔드포인트 테스트 (Phase 3 추가, 개선됨)
 
     DELETE /api/backtests/tasks/{task_id} 취소 기능을 테스트합니다.
+
+    개선사항:
+    - conftest의 InMemoryRedis를 사용한 실제 상태 저장 검증
+    - TaskManager.cancel_task 실제 구현 실행
+    - 취소 후 Redis에 status="cancelled" 저장 여부 확인
     """
 
-    def test_cancel_queued_task_success(self, monkeypatch):
-        """대기 중인 작업 취소 성공"""
+    def test_cancel_queued_task_success(self, setup_task_in_redis, in_memory_redis_instance):
+        """대기 중인 작업 취소 성공 (상태 저장 검증)"""
         task_id = str(uuid.uuid4())
 
-        # 초기 상태: queued
-        def mock_get_status_queued(tid):
-            if tid == task_id:
-                return {
-                    "task_id": task_id,
-                    "status": TaskStatus.QUEUED.value,
-                    "progress": 0.0,
-                    "result": None,
-                    "error": None,
-                }
-            return None
+        # 1. Redis에 초기 상태 설정: queued
+        setup_task_in_redis(task_id, status=TaskStatus.QUEUED.value, progress=0.0)
 
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status_queued
-        )
-
-        # 취소 시도
+        # 2. 취소 API 호출
         response = client.delete(f"/api/backtests/tasks/{task_id}")
 
+        # 3. 응답 검증
         assert response.status_code == 200
         data = response.json()
         assert data["task_id"] == task_id
         assert data["status"] == "cancelled"
         assert "created_at" in data
 
-    def test_cancel_running_task_success(self, monkeypatch):
-        """실행 중인 작업 취소 성공"""
+        # 4. Redis 상태 검증 (개선됨: 실제 저장 확인)
+        task_key = f"task:{task_id}"
+        stored_status = in_memory_redis_instance.hget(task_key, "status")
+        assert stored_status == TaskStatus.CANCELLED.value, \
+            f"Expected cancelled status in Redis, got {stored_status}"
+
+    def test_cancel_running_task_success(self, setup_task_in_redis, in_memory_redis_instance):
+        """실행 중인 작업 취소 성공 (상태 저장 검증)"""
         task_id = str(uuid.uuid4())
 
-        # 초기 상태: running
-        def mock_get_status_running(tid):
-            if tid == task_id:
-                return {
-                    "task_id": task_id,
-                    "status": TaskStatus.RUNNING.value,
-                    "progress": 0.6,
-                    "result": None,
-                    "error": None,
-                }
-            return None
+        # 1. Redis에 초기 상태 설정: running
+        setup_task_in_redis(task_id, status=TaskStatus.RUNNING.value, progress=0.6)
 
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status_running
-        )
-
-        # 취소 시도
+        # 2. 취소 API 호출
         response = client.delete(f"/api/backtests/tasks/{task_id}")
 
+        # 3. 응답 검증
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "cancelled"
 
-    def test_cancel_completed_task_fails(self, monkeypatch):
-        """완료된 작업 취소 실패 (400)"""
+        # 4. Redis 상태 검증 (개선됨)
+        task_key = f"task:{task_id}"
+        stored_status = in_memory_redis_instance.hget(task_key, "status")
+        assert stored_status == TaskStatus.CANCELLED.value
+
+    def test_cancel_completed_task_fails(self, setup_task_in_redis):
+        """완료된 작업 취소 실패 (400) - 상태 저장 검증"""
         task_id = str(uuid.uuid4())
 
-        # 상태: completed
-        def mock_get_status_completed(tid):
-            if tid == task_id:
-                return {
-                    "task_id": task_id,
-                    "status": TaskStatus.COMPLETED.value,
-                    "progress": 1.0,
-                    "result": {"run_id": task_id},
-                    "error": None,
-                }
-            return None
+        # 1. Redis에 초기 상태 설정: completed
+        setup_task_in_redis(task_id, status=TaskStatus.COMPLETED.value, progress=1.0)
 
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status_completed
-        )
-
-        # 취소 시도 → 실패 예상
+        # 2. 취소 시도 → 실패 예상
         response = client.delete(f"/api/backtests/tasks/{task_id}")
 
+        # 3. 에러 응답 검증
         assert response.status_code == 400
         data = response.json()
         assert "Cannot cancel" in data["detail"]
         assert "completed" in data["detail"].lower()
 
-    def test_cancel_failed_task_fails(self, monkeypatch):
-        """실패한 작업 취소 실패 (400)"""
+    def test_cancel_failed_task_fails(self, setup_task_in_redis):
+        """실패한 작업 취소 실패 (400) - 상태 저장 검증"""
         task_id = str(uuid.uuid4())
 
-        # 상태: failed
-        def mock_get_status_failed(tid):
-            if tid == task_id:
-                return {
-                    "task_id": task_id,
-                    "status": TaskStatus.FAILED.value,
-                    "progress": 0.5,
-                    "result": None,
-                    "error": "Execution failed",
-                }
-            return None
+        # 1. Redis에 초기 상태 설정: failed
+        setup_task_in_redis(task_id, status=TaskStatus.FAILED.value, progress=0.5)
 
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status_failed
-        )
-
-        # 취소 시도 → 실패 예상
+        # 2. 취소 시도 → 실패 예상
         response = client.delete(f"/api/backtests/tasks/{task_id}")
 
+        # 3. 에러 응답 검증
         assert response.status_code == 400
         data = response.json()
         assert "Cannot cancel" in data["detail"]
 
-    def test_cancel_nonexistent_task(self):
-        """존재하지 않는 작업 취소 (404)"""
+    def test_cancel_nonexistent_task(self, in_memory_redis_instance):
+        """존재하지 않는 작업 취소 (404) - Redis에 없는 작업"""
         fake_task_id = str(uuid.uuid4())
 
+        # Redis에 해당 작업이 없음을 확인
+        assert in_memory_redis_instance.hget(f"task:{fake_task_id}", "status") is None
+
+        # 취소 시도 → 404 예상
         response = client.delete(f"/api/backtests/tasks/{fake_task_id}")
 
         assert response.status_code == 404
         data = response.json()
         assert "Task not found" in data["detail"]
 
-    def test_cancel_and_verify_state_consistency(self, monkeypatch):
-        """취소 후 상태 일관성 확인"""
+    def test_cancel_and_verify_state_consistency(self, setup_task_in_redis):
+        """DELETE 취소 후 GET 조회 시 동일한 cancelled 상태 반환 (상태 일관성 개선)
+
+        이 테스트는:
+        1. 초기 상태를 Redis에 설정
+        2. DELETE로 취소
+        3. GET으로 조회하면 같은 cancelled 상태를 반환하는지 검증
+        4. 실제 Redis 상태 저장 확인
+        """
         task_id = str(uuid.uuid4())
 
-        # 초기: queued
-        call_count = 0
+        # 1. Redis에 초기 상태 설정: queued
+        setup_task_in_redis(task_id, status=TaskStatus.QUEUED.value, progress=0.0)
 
-        def mock_get_status_dynamic(tid):
-            nonlocal call_count
-            if tid == task_id:
-                if call_count == 0:
-                    # 첫 번째 호출 (취소 전): queued
-                    call_count += 1
-                    return {
-                        "task_id": task_id,
-                        "status": TaskStatus.QUEUED.value,
-                        "progress": 0.0,
-                        "result": None,
-                        "error": None,
-                    }
-                else:
-                    # 이후 호출 (취소 후): cancelled
-                    return {
-                        "task_id": task_id,
-                        "status": TaskStatus.CANCELLED.value,
-                        "progress": 0.0,
-                        "result": None,
-                        "error": "Task cancelled by user",
-                    }
-            return None
-
-        monkeypatch.setattr(
-            "backend.app.main.TaskManager.get_status",
-            mock_get_status_dynamic
-        )
-
-        # 취소 전 상태 확인
+        # 2. 취소 전 상태 확인
         response1 = client.get(f"/api/backtests/status/{task_id}")
         assert response1.json()["status"] == "queued"
 
-        # 취소
+        # 3. DELETE로 취소
         response2 = client.delete(f"/api/backtests/tasks/{task_id}")
         assert response2.json()["status"] == "cancelled"
 
-        # 취소 후 상태 확인
+        # 4. GET으로 조회 → cancelled 상태 확인 (상태 일관성)
         response3 = client.get(f"/api/backtests/status/{task_id}")
-        assert response3.json()["status"] == "cancelled"
+        data = response3.json()
+        assert data["status"] == "cancelled", \
+            f"Expected cancelled status, got {data['status']}"
+        assert data["error"] == "Task cancelled by user", \
+            "Expected cancellation reason in error field"

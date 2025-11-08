@@ -3,46 +3,101 @@ Pytest 설정 및 공유 픽스처 (Phase 3)
 
 이 파일은 모든 테스트에서 사용되는 공유 픽스처를 정의합니다.
 특히 Redis/RQ 모킹을 중앙에서 관리하여 테스트 안정성을 보장합니다.
+
+개선사항:
+- InMemoryRedis: 메모리 기반 Redis 추상화 (상태 변경 검증)
+- TaskManager.cancel_task는 patch 제거 (실제 구현 실행)
 """
 
 import pytest
 import uuid
+import json
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+
+
+class InMemoryRedis:
+    """
+    메모리 기반 Redis 구현 (테스트용)
+
+    실제 Redis의 주요 메서드를 메모리 dict로 구현하여,
+    테스트에서 상태 변경을 실제로 검증할 수 있게 합니다.
+    """
+
+    def __init__(self):
+        self._data = {}  # {key: value} 저장소
+        self._hashes = {}  # {hash_key: {field: value}} 저장소
+        self._ttl = {}  # {key: ttl_seconds} 저장소
+
+    def hset(self, name, key, value):
+        """Hash 필드 설정"""
+        if name not in self._hashes:
+            self._hashes[name] = {}
+        self._hashes[name][key] = value
+        return 1
+
+    def hget(self, name, key):
+        """Hash 필드 조회"""
+        if name in self._hashes and key in self._hashes[name]:
+            return self._hashes[name][key]
+        return None
+
+    def hgetall(self, name):
+        """Hash 전체 조회"""
+        if name in self._hashes:
+            return self._hashes[name]
+        return {}
+
+    def set(self, key, value):
+        """String 값 설정"""
+        self._data[key] = value
+        return True
+
+    def get(self, key):
+        """String 값 조회"""
+        return self._data.get(key)
+
+    def delete(self, key):
+        """키 삭제"""
+        if key in self._data:
+            del self._data[key]
+            return 1
+        return 0
+
+    def expire(self, key, seconds):
+        """TTL 설정"""
+        self._ttl[key] = seconds
+        return 1
+
+    def flushdb(self):
+        """데이터베이스 초기화 (테스트용)"""
+        self._data.clear()
+        self._hashes.clear()
+        self._ttl.clear()
+
+    def __repr__(self):
+        return f"InMemoryRedis(hashes={len(self._hashes)}, data={len(self._data)})"
 
 
 @pytest.fixture(autouse=True)
 def mock_redis_and_queue():
     """
-    Redis/RQ 모킹 자동 픽스처 (autouse=True)
+    Redis/RQ 모킹 자동 픽스처 (autouse=True, 개선됨)
 
     모든 테스트에서 자동으로 Redis 연결과 RQ 큐를 모킹합니다.
-    테스트가 실제 Redis/RQ 인스턴스 없이 실행되도록 보장합니다.
+
+    개선사항:
+    - InMemoryRedis를 사용하여 실제 상태 변경을 메모리에 반영
+    - TaskManager.cancel_task는 패치하지 않음 (실제 구현 실행)
+    - 테스트에서 상태 변경을 검증 가능
     """
-    with patch("backend.app.config.redis_conn") as mock_redis, \
-         patch("backend.app.main.redis_conn") as mock_redis_main, \
-         patch("backend.app.task_manager.redis_conn") as mock_redis_tm, \
-         patch("backend.app.main.rq_queue") as mock_queue, \
-         patch("backend.app.task_manager.TaskManager.cancel_task") as mock_cancel:
+    # 메모리 기반 Redis 인스턴스
+    in_memory_redis = InMemoryRedis()
 
-        # Redis 연결 설정
-        # hget은 None을 반환하도록 설정 (키가 없을 때)
-        mock_redis.hset = MagicMock(return_value=1)
-        mock_redis.hget = MagicMock(return_value=None)
-        mock_redis.hgetall = MagicMock(return_value={})
-        mock_redis.set = MagicMock(return_value=True)
-        mock_redis.get = MagicMock(return_value=None)
-        mock_redis.expire = MagicMock(return_value=1)
-        mock_redis.delete = MagicMock(return_value=0)
-
-        mock_redis_main.hset = MagicMock(return_value=1)
-        mock_redis_main.hget = MagicMock(return_value=None)
-        mock_redis_main.expire = MagicMock(return_value=1)
-
-        mock_redis_tm.hset = MagicMock(return_value=1)
-        mock_redis_tm.hget = MagicMock(return_value=None)
-        mock_redis_tm.hgetall = MagicMock(return_value={})
-        mock_redis_tm.expire = MagicMock(return_value=1)
+    with patch("backend.app.config.redis_conn", in_memory_redis), \
+         patch("backend.app.main.redis_conn", in_memory_redis), \
+         patch("backend.app.task_manager.redis_conn", in_memory_redis), \
+         patch("backend.app.main.rq_queue") as mock_queue:
 
         # RQ Queue 설정
         mock_job = MagicMock()
@@ -50,17 +105,46 @@ def mock_redis_and_queue():
         mock_queue.enqueue = MagicMock(return_value=mock_job)
         mock_queue.fetch_job = MagicMock(return_value=None)
 
-        # TaskManager.cancel_task 모킹
-        mock_cancel.return_value = None
-
         yield {
-            "redis": mock_redis,
-            "redis_main": mock_redis_main,
-            "redis_tm": mock_redis_tm,
+            "redis": in_memory_redis,
             "queue": mock_queue,
             "job": mock_job,
-            "cancel_task": mock_cancel,
         }
+
+
+@pytest.fixture
+def in_memory_redis_instance(mock_redis_and_queue):
+    """
+    테스트에서 직접 접근할 수 있는 InMemoryRedis 인스턴스
+
+    취소 로직 검증을 위해 초기 상태를 설정하거나 최종 상태를 확인할 때 사용합니다.
+    """
+    return mock_redis_and_queue["redis"]
+
+
+@pytest.fixture
+def setup_task_in_redis(in_memory_redis_instance):
+    """
+    InMemoryRedis에 작업 상태를 직접 설정하는 헬퍼
+
+    테스트에서 초기 상태를 쉽게 설정할 수 있게 합니다.
+    """
+    def _setup(task_id, status="queued", progress=0.0):
+        from backend.app.task_manager import TaskStatus
+        from datetime import datetime
+
+        # task:{task_id} Hash에 상태 저장
+        task_key = f"task:{task_id}"
+        in_memory_redis_instance.hset(task_key, "status", status)
+        in_memory_redis_instance.hset(task_key, "created_at", datetime.utcnow().isoformat() + "Z")
+        in_memory_redis_instance.hset(task_key, "progress", str(progress))
+
+        # progress:{task_id} String에도 저장 (TaskManager 호환)
+        in_memory_redis_instance.set(f"progress:{task_id}", str(progress))
+
+        return task_id
+
+    return _setup
 
 
 @pytest.fixture

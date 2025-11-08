@@ -280,9 +280,11 @@ Infrastructure:
 
 **3. 문서/테스트 실행 링크** ✅
 - ✅ `TEST_RESULTS_SUMMARY.md` 업데이트
-  - 테스트 실행 명령어 추가
+  - 테스트 실행 명령어 추가 (PYTHONPATH=. 표준화)
   - 실행 타임스탬프 추가 (2025-11-08 17:45 UTC)
   - 최종 결과 기록 (6 passed)
+- ✅ `ASYNC_API_REFINEMENT_SUMMARY.md` 업데이트
+  - 실행 명령어 표준화 (PYTHONPATH=.)
 - ✅ `PHASE3_IMPLEMENTATION_STATUS.md` 업데이트
   - 성공 기준 pytest 통과율 업데이트 (92%)
   - 비동기 API 상태 업데이트 (6개 테스트 통과)

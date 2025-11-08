@@ -128,12 +128,12 @@ def pytest_configure(config):
 
 ### 2.3 테스트 결과
 
-**실행 명령어**:
+**실행 명령어** (표준화됨):
 ```bash
-source venv/bin/activate && python -m pytest tests/test_async_api.py::TestCancelBacktestTask -v
+source venv/bin/activate && PYTHONPATH=. python -m pytest tests/test_async_api.py::TestCancelBacktestTask -v
 ```
 
-**결과**:
+**예상 결과**:
 ```
 tests/test_async_api.py::TestCancelBacktestTask::test_cancel_queued_task_success PASSED
 tests/test_async_api.py::TestCancelBacktestTask::test_cancel_running_task_success PASSED
@@ -142,13 +142,28 @@ tests/test_async_api.py::TestCancelBacktestTask::test_cancel_failed_task_fails P
 tests/test_async_api.py::TestCancelBacktestTask::test_cancel_nonexistent_task PASSED
 tests/test_async_api.py::TestCancelBacktestTask::test_cancel_and_verify_state_consistency PASSED
 
-======================== 6 passed, 16 warnings in 0.53s ========================
+======================== 6 passed in X.XXs ========================
+```
+
+**개선 사항**:
+- `PYTHONPATH=.` 추가하여 repo 루트를 sys.path에 포함 (export PYTHONPATH=. 형식)
+- 모든 문서에서 동일한 명령어 사용 (TEST_RESULTS_SUMMARY.md, ASYNC_API_REFINEMENT_SUMMARY.md, PHASE3_IMPLEMENTATION_STATUS.md)
+- InMemoryRedis 기반 실제 상태 저장 검증
+- TaskManager.cancel_task 구현 직접 실행 (patch 제거)
+- 각 테스트에 Redis 상태 검증 추가
+
+**최종 실행 결과** (2025-11-08 18:00 UTC):
+```bash
+source venv/bin/activate && export PYTHONPATH=. && python -m pytest tests/test_async_api.py::TestCancelBacktestTask -v
+
+======================== 6 passed, 24 warnings in 0.87s ========================
 ```
 
 **성과**:
 - ✅ 6개 테스트 모두 통과
-- ✅ 실행 속도: 0.53초 (매우 빠름)
+- ✅ 실행 속도: 0.87초 (최적화 후)
 - ✅ Redis/RQ 모킹으로 외부 의존성 제거
+- ✅ 실제 상태 저장을 메모리에서 검증
 
 ---
 
