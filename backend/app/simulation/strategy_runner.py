@@ -13,6 +13,8 @@ from backend.app.database import DatabaseManager, get_db
 from backend.app.market_data.candle_builder import CandleData
 from backend.app.strategies.base import Strategy, Signal
 from backend.app.strategy_factory import StrategyFactory
+from backend.app.result_manager import ResultManager
+from backend.app.simulation.position_manager import PositionManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +41,34 @@ class StrategyConfig:
 
 class StrategyRunner:
     """
-    실시간 전략 실행 엔진
+    실시간 전략 실행 엔진 (Task 3.5: 의존성 주입 지원)
 
     여러 전략을 관리하고 실시간 캔들 데이터를 처리합니다.
+    ResultManager와 PositionManager를 주입받아 테스트를 용이하게 합니다.
     """
 
-    def __init__(self):
-        """StrategyRunner 초기화"""
+    def __init__(
+        self,
+        result_manager: Optional[ResultManager] = None,
+        position_manager: Optional[PositionManager] = None,
+    ):
+        """
+        StrategyRunner 초기화 (의존성 주입)
+
+        Args:
+            result_manager: 결과 관리자 (선택사항, 기본값: 새 인스턴스 생성)
+            position_manager: 포지션 관리자 (선택사항, 기본값: 새 인스턴스 생성)
+        """
+        self.result_manager = result_manager or ResultManager()
+        self.position_manager = position_manager or PositionManager()
         self.strategies: Dict[str, StrategyConfig] = {}  # (symbol, strategy_name) -> StrategyConfig
         self.db: Optional[DatabaseManager] = None
         self.is_running = False
         self.on_signal: Optional[Callable] = None  # 신호 생성 시 콜백
         self.session_id: Optional[str] = None
+
+        logger.info(f"StrategyRunner initialized with ResultManager: {type(self.result_manager).__name__}, "
+                    f"PositionManager: {type(self.position_manager).__name__}")
 
     def set_signal_callback(self, callback: Callable) -> None:
         """
