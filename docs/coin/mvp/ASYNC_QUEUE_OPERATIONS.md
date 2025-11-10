@@ -10,6 +10,13 @@
 
 1. [아키텍처 개요](#아키텍처-개요)
 2. [운영 시나리오](#운영-시나리오)
+   - [시나리오 1: 정상 실행](#시나리오-1-정상-실행)
+   - [시나리오 2: 워커 장애](#시나리오-2-워커-장애)
+   - [시나리오 3: Redis 장애](#시나리오-3-redis-장애)
+   - [시나리오 4: 작업 타임아웃](#시나리오-4-작업-타임아웃)
+   - [시나리오 5: DLQ 처리](#시나리오-5-dlq-처리)
+   - [시나리오 6: 메트릭 이상 탐지](#시나리오-6-메트릭-이상-탐지)
+   - [시나리오 7: 배포/스케일링 작업](#시나리오-7-배포스케일링-작업)
 3. [장애 대응 플레이북](#장애-대응-플레이북)
 4. [모니터링 지표](#모니터링-지표)
 5. [명령어 참고](#명령어-참고)
@@ -409,6 +416,344 @@ EOF
 - 입력 검증 강화
 - 타임아웃 설정 최적화
 - 모니터링 알림 설정 (DLQ > 10개)
+
+---
+
+### 시나리오 6: 메트릭 이상 탐지
+
+**상황**: 모니터링 지표가 임계값을 초과하여 성능 저하 감지
+
+**증상**:
+- 큐 길이 급증 (> 50개)
+- 작업 실패율 상승 (> 10%)
+- 평균 처리 시간 증가 (> 600초)
+- Redis 메모리 사용률 높음 (> 80%)
+
+**진단**:
+
+```bash
+# 1. 실시간 모니터링 (5초 간격)
+watch -n 5 'rq info'
+
+# 출력 예:
+# backtest-queue: 87 jobs (⚠️ > 50)
+# Workers: 2
+# finished_queue: 512
+# failed_queue: 45 (⚠️ > 20)
+
+# 2. 헬스 체크 실행
+./scripts/health_check.sh verbose
+
+# 출력: [WARNING] Queue too long: 87 jobs
+#       [ERROR] Failure rate high: 12.5%
+
+# 3. Redis 메모리 확인
+redis-cli INFO memory | grep used_memory_human
+# 출력: used_memory_human:512M (⚠️ > 80% 용량)
+
+# 4. 느린 작업 확인
+redis-cli ZRANGE rq:failed_queue 0 -1 | while read job; do
+  redis-cli GET "rq:job:$job:exc_info" | head -1
+done | sort | uniq -c
+
+# 5. 실패율 계산
+FAILED=$(redis-cli ZCOUNT rq:failed_queue -inf +inf)
+COMPLETED=$(redis-cli ZCOUNT rq:finished_queue -inf +inf)
+RATE=$((FAILED * 100 / (FAILED + COMPLETED)))
+echo "Failure rate: ${RATE}%"
+```
+
+**대응 방법**:
+
+```bash
+# 방법 1: 워커 추가 (스케일 업)
+docker-compose --profile worker up -d worker --scale worker=6  # 2개 → 6개로 증가
+
+# 또는 로컬 환경에서:
+rq worker backtest-queue -w 4 --verbose &
+
+# 2. 새 작업 제출 일시 중단 (로드 밸런싱)
+# → 프론트엔드에서 API 임시 비활성화
+
+# 3. 오래된 DLQ 작업 정리
+python << 'EOF'
+import redis
+from datetime import datetime, timedelta
+
+r = redis.Redis()
+cutoff = datetime.now() - timedelta(days=3)
+failed = r.zrange('rq:failed_queue', 0, -1)
+
+count = 0
+for job_id in failed:
+    # 오래된 실패 작업 삭제
+    r.zrem('rq:failed_queue', job_id)
+    r.delete(f'rq:job:{job_id}')
+    count += 1
+
+print(f"Cleaned up {count} old jobs from DLQ")
+EOF
+
+# 4. Redis 메모리 최적화
+redis-cli CONFIG SET maxmemory-policy allkeys-lru
+redis-cli CONFIG REWRITE
+
+# 5. Slack 알림 발송
+python << 'EOF'
+import os
+import requests
+import time
+
+message = f"""
+⚠️ RQ 큐 이상 탐지 - {time.strftime('%Y-%m-%d %H:%M:%S')}
+
+문제:
+- 큐 길이: 87개 (임계값: 50)
+- 실패율: 12.5% (임계값: 10%)
+- Redis 메모리: 512MB (용량: 80%)
+
+조치:
+- 워커 6개로 스케일 업 ✅
+- DLQ 정리 ✅
+- 모니터링 지속 중...
+""".strip()
+
+SLACK_WEBHOOK = os.getenv('SLACK_WEBHOOK_URL')
+if SLACK_WEBHOOK:
+    requests.post(SLACK_WEBHOOK, json={
+        'attachments': [{
+            'color': '#ff9900',
+            'title': '⚠️ RQ 큐 이상 탐지',
+            'text': message,
+            'ts': int(time.time())
+        }]
+    })
+EOF
+```
+
+**검증**:
+
+```bash
+# 1. 워커 개수 확인
+rq info
+# 출력: Workers: 6 ✅ (증가됨)
+
+# 2. 큐 길이 감소 모니터링 (5분 대기)
+watch -n 10 'redis-cli LLEN rq:queue:backtest-queue'
+# 87 → 45 → 12 → 0 (감소 추이)
+
+# 3. 실패율 개선 확인
+# 스크립트 재실행 후 실패율 < 5% 확인
+
+# 4. Redis 메모리 확인
+redis-cli INFO memory | grep used_memory_percent
+# 출력: used_memory_percent: 45.2% (정상 범위 복구)
+
+# 5. 로그 기록
+echo "메트릭 이상 탐지 및 조치 완료 - $(date)" >> ${DATA_ROOT}/logs/operations.log
+```
+
+**예방 방법**:
+- 자동 워커 스케일링 설정 (큐 길이 > 50 시 자동 증가)
+- Slack 알림 자동화 (모니터링 지표 임계값 초과)
+- 정기적 DLQ 정리 스케줄 (매주 월요일 자정)
+- Redis 메모리 한계 설정 및 LRU 정책 활성화
+
+---
+
+### 시나리오 7: 배포/스케일링 작업
+
+**상황**: 새 워커 배포, 환경 변수 변경, 롤링 재시작 등 운영 변경 작업
+
+**증상**:
+- 배포 중 작업 손실 위험
+- 환경 변수 불일치로 인한 오류
+- 워커 재시작 시 진행 중인 작업 영향
+- 롤백 필요 시 복구 어려움
+
+**진단 및 사전 확인**:
+
+```bash
+# 1. 현재 시스템 상태 점검
+rq info
+# 출력:
+# backtest-queue: 12 jobs
+# Workers: 2
+# finished_queue: 234
+# failed_queue: 5
+
+# 2. 환경 변수 확인
+env | grep -E "^RQ_|^REDIS_|^DATABASE_|^AWS_" | sort
+# 출력:
+# RQ_JOB_TIMEOUT=360
+# REDIS_HOST=redis
+# REDIS_PORT=6379
+# DATABASE_URL=postgresql://...
+# AWS_BUCKET_NAME=my-bucket
+
+# 3. Docker 상태 확인
+docker-compose ps
+# 모든 서비스가 정상 상태인지 확인
+
+# 4. 백업 생성 (롤백용)
+./scripts/backup.sh all
+# 출력: Backup created: backups/full_backup_2025-11-10_17:45.tar.gz
+```
+
+**배포 방법 (안전성 우선)**:
+
+```bash
+# ========== 방법 1: 롤링 재시작 (무중단 배포) ==========
+
+# 1. 점진적 워커 교체
+# - 기존 워커 2개 중 1개씩 재시작
+# - 다른 워커가 계속 처리하도록 유지
+
+# 첫 번째 워커 종료 (graceful shutdown)
+docker-compose --profile worker stop worker_1  # 또는 첫 번째 인스턴스
+
+# 새 이미지로 재시작
+docker-compose --profile worker up -d worker_1
+
+# 두 번째 워커 재시작
+sleep 30  # 첫 번째 워커 안정화 대기
+docker-compose --profile worker restart worker_2
+
+# 2. 진행 중인 작업 확인
+watch -n 5 'rq info'
+# 항상 최소 1개 워커 활성
+
+# 3. 배포 완료 확인
+docker-compose ps | grep worker
+# 모든 워커 상태: Up
+
+# ========== 방법 2: 동적 스케일링 ==========
+
+# 1. 워커 개수 임시 증가
+docker-compose --profile worker up -d worker --scale worker=6
+
+# 2. 기존 워커들이 작업 처리하도록 유도
+# (모든 작업이 배포되는 동안 처리)
+until [ $(redis-cli LLEN rq:queue:backtest-queue) -eq 0 ]; do
+  echo "대기 중... $(redis-cli LLEN rq:queue:backtest-queue) 작업 남음"
+  sleep 10
+done
+echo "모든 작업 처리 완료!"
+
+# 3. 스케일 다운
+docker-compose --profile worker up -d worker --scale worker=2
+
+# ========== 방법 3: 환경 변수 변경 ==========
+
+# 1. .env 파일 수정
+sed -i 's/RQ_JOB_TIMEOUT=360/RQ_JOB_TIMEOUT=1800/' .env
+
+# 2. 변경사항 검증
+grep "RQ_JOB_TIMEOUT" .env
+# 출력: RQ_JOB_TIMEOUT=1800
+
+# 3. 워커 재시작 (새 환경 변수 적용)
+docker-compose --profile worker restart worker
+
+# 4. 확인
+docker-compose exec worker env | grep RQ_JOB_TIMEOUT
+# 출력: RQ_JOB_TIMEOUT=1800
+
+# 5. 변경 로그 기록
+git add .env
+git commit -m "chore: Update RQ_JOB_TIMEOUT to 1800 seconds"
+```
+
+**검증**:
+
+```bash
+# 1. 워커 활성 상태 확인
+rq info
+# 출력: Workers: 2 (또는 스케일링된 개수)
+
+# 2. 진행 중 작업 손실 없음 확인
+BEFORE=234  # 배포 전 완료 작업 수
+AFTER=$(redis-cli ZCOUNT rq:finished_queue -inf +inf)
+if [ "$AFTER" -ge "$BEFORE" ]; then
+  echo "✅ 작업 손실 없음: $BEFORE → $AFTER"
+else
+  echo "❌ 작업 손실 감지! 즉시 롤백 필요"
+fi
+
+# 3. 새 환경 변수 적용 확인
+docker-compose exec backend env | grep RQ_JOB_TIMEOUT
+
+# 4. 헬스 체크 실행
+./scripts/health_check.sh
+# 모든 항목 Green ✅
+
+# 5. 테스트 작업 실행
+curl -X POST http://localhost:8000/api/backtests/run-async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "strategy": "test",
+    "symbols": ["BTC_KRW"],
+    "start_date": "2025-01-01",
+    "end_date": "2025-01-07"
+  }' | jq .status
+# 출력: "queued" → "running" → "completed" 정상 진행
+
+# 6. 로그 기록
+echo "배포/스케일링 완료 - $(date) - 작업 손실 없음" >> ${DATA_ROOT}/logs/operations.log
+```
+
+**롤백 절차** (문제 발생 시):
+
+```bash
+# 1. 문제 증상 감지
+# 예: 실패율 급증, 메모리 누수 등
+
+# 2. 즉시 이전 상태로 복구
+git revert HEAD  # 마지막 변경 취소
+docker-compose restart worker
+docker-compose restart backend
+
+# 또는 백업에서 복구
+tar -xzf backups/full_backup_2025-11-10_17:45.tar.gz
+docker-compose restart
+
+# 3. 롤백 로그 기록
+echo "⚠️ 배포 롤백 수행 - $(date) - 원인: 실패율 증가" >> ${DATA_ROOT}/logs/operations.log
+
+# 4. 원인 분석 후 재배포
+# (로그 리뷰, 문제 수정, 테스트 후 재배포)
+```
+
+**배포 체크리스트**:
+
+```bash
+# 배포 전 확인
+- [ ] 현재 큐 상태 정상 (대기 작업 < 50개)
+- [ ] 모든 워커 정상 운영 중
+- [ ] Redis 연결 정상
+- [ ] 데이터베이스 연결 정상
+- [ ] 백업 생성 완료
+- [ ] 변경사항 Git에 커밋
+
+# 배포 중 확인
+- [ ] 롤링 재시작 진행 중 (무중단)
+- [ ] 워커 개수 >= 1 유지
+- [ ] 진행 중 작업 손실 없음
+
+# 배포 후 확인
+- [ ] 모든 워커 정상 상태
+- [ ] 헬스 체크 통과
+- [ ] 테스트 작업 정상 처리
+- [ ] 작업 손실 없음 확인
+- [ ] 로그에 배포 기록 남김
+```
+
+**예방 방법**:
+- 배포 자동화 스크립트 (scripts/deploy.sh)
+- 무중단 배포 (Rolling Deployment) 구성
+- 자동 헬스 체크 및 롤백 (실패 시 자동 복구)
+- 정기적 배포 테스트 (스테이징 환경)
+- 변경사항 Git 기록 및 버전 관리
 
 ---
 
