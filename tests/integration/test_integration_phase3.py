@@ -253,8 +253,8 @@ class TestPhase3Completeness:
             'tests/test_position_manager.py',
             'tests/test_result_manager.py',
             'tests/test_strategy_runner.py',
-            'tests/test_performance_regression.py',
-            'tests/test_integration_phase3.py',
+            'tests/integration/test_performance_regression.py',
+            'tests/integration/test_integration_phase3.py',
         ]
 
         for test_file in test_files:

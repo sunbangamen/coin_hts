@@ -63,7 +63,7 @@ python scripts/generate_phase3_status.py --input /tmp/test_results_*.json --upda
 <!-- AUTO-BEGIN: COMPLETION_SUMMARY_STATISTICS -->
 ### 전체 통과율
 ```
-203/203 (100.0%) 테스트 통과
+218/218 (100.0%) 테스트 통과
 ```
 
 ### 모듈별 상태
@@ -74,7 +74,7 @@ python scripts/generate_phase3_status.py --input /tmp/test_results_*.json --upda
 | **S3 스토리지** | ✅ 10/10 | Task 3.4 완료 |
 | **비동기 API** | ✅ 19/19 | Task 3.2 완료 |
 | **InMemoryRedis** | ✅ 13/13 | 호환성 테스트 |
-| **기타 모듈** | ✅ 141/141 | 기존 기능 유지 |
+| **기타 모듈** | ✅ 156/156 | 기존 기능 유지 |
 | **회귀 테스트** | ⚠️ 0실패 | Task 3.5+ 진행 |
 
 ### 실패 테스트 (0개)
