@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 """
-Phase 3 문서 일관성 검증 스크립트
+Phase 3 문서 일관성 검증 스크립트 (개선판)
 
 PHASE3_IMPLEMENTATION_STATUS.md를 기준으로,
 다른 문서들의 수치가 일관성 있게 참조되고 있는지 확인합니다.
 
 사용법:
-  python scripts/verify_status_consistency.py
+  python scripts/verify_status_consistency.py                # 경고 수준 검증
+  python scripts/verify_status_consistency.py --strict      # 에러 수준 검증 (CI/CD용)
 """
 
 import re
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 
 class DocumentConsistencyVerifier:
     """문서 일관성 검증 클래스"""
 
-    def __init__(self, project_root: Path = None):
+    def __init__(self, project_root: Path = None, strict: bool = False):
         self.project_root = project_root or Path(__file__).parent.parent
+        self.strict = strict
         self.docs = {
             'source': self.project_root / 'PHASE3_IMPLEMENTATION_STATUS.md',
             'summary': self.project_root / 'PHASE3_COMPLETION_SUMMARY.md',
@@ -27,45 +29,41 @@ class DocumentConsistencyVerifier:
         }
         self.errors = []
         self.warnings = []
+        self.source_metrics = {}
 
-    def extract_metrics(self, file_path: Path) -> Dict[str, str]:
-        """파일에서 주요 수치 추출"""
-        metrics = {}
+    def parse_test_metrics(self, content: str) -> Optional[Dict[str, int]]:
+        """문서에서 테스트 수치 파싱"""
+        # 패턴: "192/203 (94.5%) 테스트 통과" 등
+        pattern = r'(\d+)/(\d+)\s*\(([0-9.]+)%\)\s*테스트 통과'
+        match = re.search(pattern, content)
 
-        if not file_path.exists():
-            self.errors.append(f"파일을 찾을 수 없습니다: {file_path}")
-            return metrics
+        if match:
+            return {
+                'passed': int(match.group(1)),
+                'total': int(match.group(2)),
+                'pass_rate': float(match.group(3)),
+                'failed': int(match.group(2)) - int(match.group(1)),
+            }
+        return None
 
-        with open(file_path, 'r', encoding='utf-8') as f:
+    def extract_metrics_from_source(self) -> bool:
+        """소스 오브 트루스 문서에서 메트릭 추출"""
+        source_file = self.docs['source']
+        if not source_file.exists():
+            self.errors.append(f"소스 오브 트루스 파일을 찾을 수 없습니다: {source_file}")
+            return False
+
+        with open(source_file, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # 테스트 통과율 패턴 (예: "202/213", "94.8%")
-        test_patterns = [
-            r'(\d+)/(\d+)\s+테스트 통과',  # "202/213 테스트 통과"
-            r'(\d+)/(\d+)\s+PASSED',       # "202/213 PASSED"
-            r'(\d+)\s+passed,\s+(\d+)\s+failed',  # "202 passed, 11 failed"
-        ]
+        # 테스트 메트릭 파싱
+        metrics = self.parse_test_metrics(content)
+        if not metrics:
+            self.errors.append("소스 문서에서 테스트 수치를 파싱할 수 없습니다")
+            return False
 
-        for pattern in test_patterns:
-            matches = re.findall(pattern, content)
-            if matches:
-                metrics['test_pattern_found'] = pattern
-                for match in matches:
-                    metrics[f'test_{pattern}'] = match
-                break
-
-        # Task 상태 추출
-        task_statuses = re.findall(r'Task\s+3\.\d+.*?(✅|⏳|❌)', content)
-        if task_statuses:
-            metrics['task_statuses'] = task_statuses
-
-        # 참조 주석 확인
-        if 'PHASE3_IMPLEMENTATION_STATUS.md' in content:
-            metrics['has_reference_comment'] = True
-        if '소스 오브 트루스' in content or 'Source of Truth' in content:
-            metrics['has_sot_mention'] = True
-
-        return metrics
+        self.source_metrics = metrics
+        return True
 
     def verify_source_of_truth(self) -> bool:
         """소스 오브 트루스 문서 검증"""
@@ -85,7 +83,10 @@ class DocumentConsistencyVerifier:
             '소스 오브 트루스 표시': '🔴 소스 오브 트루스' in content,
             '마지막 업데이트 시간': '**마지막 업데이트**' in content,
             '업데이트 명령': 'scripts/generate_phase3_status.py' in content,
-            '재현 가능 명령': 'pytest tests/' in content,
+            '상태 검증 명령': '--strict' in content,
+            'AUTO 블록 (TEST_STATISTICS)': 'AUTO-BEGIN: TEST_STATISTICS' in content,
+            'AUTO 블록 (TASK_STATUS)': 'AUTO-BEGIN: TASK_STATUS' in content,
+            '재현 가능 명령': 'pytest' in content,
         }
 
         passed = 0
@@ -95,71 +96,85 @@ class DocumentConsistencyVerifier:
             if result:
                 passed += 1
             else:
-                self.errors.append(f"소스 오브 트루스 검증 실패: {check_name}")
+                if self.strict:
+                    self.errors.append(f"SOT 검증 실패: {check_name}")
+                else:
+                    self.warnings.append(f"SOT 검증 실패: {check_name}")
 
         print(f"\n결과: {passed}/{len(checks)} 통과")
         return passed == len(checks)
 
-    def verify_auxiliary_documents(self) -> bool:
-        """보조 문서들 검증"""
-        print("\n📚 보조 문서 검증")
+    def verify_metrics_consistency(self) -> bool:
+        """다중 문서 간 수치 일관성 검증"""
+        print("\n📊 수치 일관성 검증")
         print("-" * 60)
 
-        auxiliary_docs = {
-            '요약 문서': self.docs['summary'],
-            'Issue 문서': self.docs['issue'],
-        }
+        if not self.source_metrics:
+            print("⚠️  소스 문서의 메트릭이 없습니다")
+            return False
 
-        all_passed = True
-        for doc_name, doc_path in auxiliary_docs.items():
-            if not doc_path.exists():
-                self.warnings.append(f"{doc_name}을(를) 찾을 수 없습니다: {doc_path}")
-                print(f"⚠️  {doc_name}: 파일 없음")
+        source_str = f"{self.source_metrics['passed']}/{self.source_metrics['total']}"
+        print(f"📌 기준값 (SOT): {source_str} ({self.source_metrics['pass_rate']:.1f}%)")
+
+        all_consistent = True
+        for doc_name, doc_path in self.docs.items():
+            if doc_name == 'source' or not doc_path.exists():
                 continue
 
             with open(doc_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
-            # 참조 링크 확인
-            has_reference = 'PHASE3_IMPLEMENTATION_STATUS.md' in content
-            status = "✅" if has_reference else "⚠️"
-            print(f"{status} {doc_name}: 소스 오브 트루스 참조", end="")
-
-            if not has_reference:
-                print(" (없음)")
-                self.warnings.append(f"{doc_name}에서 소스 오브 트루스 참조가 없습니다")
-                all_passed = False
+            metrics = self.parse_test_metrics(content)
+            if not metrics:
+                status = "⚠️"
+                result = "(수치 없음)"
+                if self.strict and doc_name in ['summary', 'issue']:
+                    # 보조 문서에서 수치가 없으면 경고
+                    self.warnings.append(f"{doc_name}에서 테스트 수치를 찾을 수 없습니다")
             else:
-                print(" (있음)")
+                # 수치 일치 확인
+                match = (metrics['passed'] == self.source_metrics['passed'] and
+                         metrics['total'] == self.source_metrics['total'])
+                status = "✅" if match else "❌"
+                result = f"{metrics['passed']}/{metrics['total']} ({metrics['pass_rate']:.1f}%)"
 
-        return all_passed
+                if not match:
+                    all_consistent = False
+                    error_msg = f"{doc_name}: {result} (기준값과 불일치)"
+                    if self.strict:
+                        self.errors.append(error_msg)
+                    else:
+                        self.warnings.append(error_msg)
 
-    def verify_critical_metrics(self) -> bool:
-        """핵심 수치 일관성 검증"""
-        print("\n🔢 핵심 수치 일관성 검증")
+            print(f"{status} {doc_name}: {result}")
+
+        return all_consistent
+
+    def verify_auto_blocks(self) -> bool:
+        """AUTO 블록 존재 검증"""
+        print("\n🔲 AUTO 블록 검증")
         print("-" * 60)
 
-        source_metrics = self.extract_metrics(self.docs['source'])
+        source_file = self.docs['source']
+        with open(source_file, 'r', encoding='utf-8') as f:
+            source_content = f.read()
 
-        if not source_metrics:
-            self.warnings.append("소스 문서에서 수치를 추출할 수 없습니다")
-            return False
+        auto_blocks = [
+            'AUTO-BEGIN: TEST_STATISTICS',
+            'AUTO-BEGIN: TASK_STATUS',
+        ]
 
-        # 다른 문서들도 검증
-        for doc_name, doc_path in self.docs.items():
-            if doc_name == 'source' or not doc_path.exists():
-                continue
+        all_present = True
+        for block in auto_blocks:
+            found = block in source_content
+            status = "✅" if found else "❌"
+            print(f"{status} {block}")
+            if not found:
+                all_present = False
+                if self.strict:
+                    self.errors.append(f"필수 AUTO 블록을 찾을 수 없습니다: {block}")
 
-            doc_metrics = self.extract_metrics(doc_path)
-            if 'test_pattern_found' in doc_metrics and 'test_pattern_found' in source_metrics:
-                # 두 문서 모두 테스트 수치가 있으면 일관성 확인
-                print(f"✅ {doc_name}: 문서에서 메트릭 발견")
-            elif 'test_pattern_found' not in doc_metrics:
-                # 보조 문서는 자동 삽입 대상이므로 수치가 없을 수 있음
-                if doc_name not in ['summary', 'issue']:
-                    self.warnings.append(f"{doc_name}에서 테스트 수치를 찾을 수 없습니다")
-
-        return len(self.errors) == 0
+        return all_present
 
     def generate_report(self) -> str:
         """검증 리포트 생성"""
@@ -169,15 +184,15 @@ class DocumentConsistencyVerifier:
         report.append("=" * 60)
 
         if not self.errors and not self.warnings:
-            report.append("✅ 모든 검증이 통과했습니다!")
+            report.append("✅ 모든 검증이 통과했습니다! (Strict 모드)" if self.strict else "✅ 모든 검증이 통과했습니다!")
             report.append("")
             report.append("상태:")
             report.append("  - 소스 오브 트루스 문서: ✅ 완벽")
-            report.append("  - 보조 문서 참조: ✅ 완벽")
             report.append("  - 수치 일관성: ✅ 완벽")
+            report.append("  - AUTO 블록: ✅ 완벽")
         else:
             if self.errors:
-                report.append("\n❌ 에러:")
+                report.append("\n❌ 에러 (Strict 모드):" if self.strict else "\n❌ 에러:")
                 for error in self.errors:
                     report.append(f"  - {error}")
 
@@ -193,26 +208,51 @@ class DocumentConsistencyVerifier:
 
     def run(self) -> int:
         """실행"""
-        # 검증 실행
-        sot_ok = self.verify_source_of_truth()
-        aux_ok = self.verify_auxiliary_documents()
-        metrics_ok = self.verify_critical_metrics()
+        print("🔍 Phase 3 문서 일관성 검증 시작")
+        print(f"엄격 모드: {'✅ 활성화' if self.strict else '⚠️ 비활성화'}")
 
-        # 리포트 생성 및 출력
+        # 1. 소스 메트릭 추출
+        if not self.extract_metrics_from_source():
+            report = self.generate_report()
+            print(report)
+            return 1 if self.strict else 0
+
+        # 2. 검증 실행
+        sot_ok = self.verify_source_of_truth()
+        metrics_ok = self.verify_metrics_consistency()
+        blocks_ok = self.verify_auto_blocks()
+
+        # 3. 리포트 생성 및 출력
         report = self.generate_report()
         print(report)
 
-        # 종료 코드
-        if self.errors:
-            return 1
-        elif self.warnings:
-            return 0  # 경고는 무시 (CI에서 실패하지 않음)
+        # 4. 종료 코드 결정
+        if self.strict:
+            # Strict 모드: 에러가 있으면 실패
+            if self.errors:
+                return 1
         else:
-            return 0
+            # 일반 모드: 에러만 체크
+            if self.errors:
+                return 1
+
+        return 0
 
 
 def main():
-    verifier = DocumentConsistencyVerifier()
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Phase 3 문서 일관성 검증"
+    )
+    parser.add_argument(
+        '--strict',
+        action='store_true',
+        help="strict 모드 활성화 (모든 불일치를 에러로 취급)"
+    )
+
+    args = parser.parse_args()
+
+    verifier = DocumentConsistencyVerifier(strict=args.strict)
     return verifier.run()
 
 
