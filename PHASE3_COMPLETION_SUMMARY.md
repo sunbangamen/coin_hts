@@ -763,6 +763,10 @@ GET /api/v1/monitoring/health
 - 성능 튜닝 가이드 (완료 - 본 문서)
 - 트러블슈팅 (완료 - 본 문서)
 - 자동화 스크립트 (완료 - 2025-11-10)
+- **비동기 큐 운영 플레이북** (완료 - [ASYNC_QUEUE_OPERATIONS.md](./docs/coin/mvp/ASYNC_QUEUE_OPERATIONS.md))
+  - 5가지 운영 시나리오 및 장애 대응 방법
+  - 실시간 모니터링 및 알림 설정
+  - 명령어 참고 및 자동화 가이드
 
 ### ✅ Task 3.7: 백업 및 모니터링 (완료)
 - 구조화된 JSON 로깅 (완료)

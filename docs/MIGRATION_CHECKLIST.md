@@ -282,6 +282,100 @@ curl -X POST http://localhost:8000/api/backtests/run \
 - [ ] 동기 API 정상 작동
 - [ ] 결과 파일 생성됨 (`data/results/`)
 
+### Step 3: Phase 3 신규 기능 설정
+
+#### AWS S3 설정
+
+```bash
+# 1. S3 버킷 생성
+aws s3 mb s3://backtest-bucket --region us-east-1
+
+# 2. 버킷 버저닝 활성화 (선택사항)
+aws s3api put-bucket-versioning \
+  --bucket backtest-bucket \
+  --versioning-configuration Status=Enabled
+
+# 3. Lifecycle 정책 설정 (30일 후 자동 삭제)
+aws s3api put-bucket-lifecycle-configuration \
+  --bucket backtest-bucket \
+  --lifecycle-configuration file://lifecycle.json
+
+# lifecycle.json 내용:
+# {
+#   "Rules": [
+#     {
+#       "Prefix": "backtests/",
+#       "Expiration": {"Days": 30},
+#       "Status": "Enabled"
+#     }
+#   ]
+# }
+```
+
+- [ ] S3 버킷 생성 완료
+- [ ] IAM 최소 권한 정책 적용
+- [ ] S3 버킷 정책 설정 확인
+- [ ] 버킷 버저닝 활성화 (선택사항)
+
+#### 로깅/알림 환경 변수 설정
+
+```bash
+# 1. .env 파일에 추가
+cat >> .env << 'EOF'
+
+# Slack 알림
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+SLACK_ENABLED=true
+
+# Email 알림
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM_ADDR=ops@company.com
+EMAIL_ENABLED=true
+
+# AWS S3
+AWS_BUCKET_NAME=backtest-bucket
+AWS_REGION=us-east-1
+EOF
+
+# 2. 환경 변수 검증
+echo "SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-'NOT SET'}"
+echo "SMTP_HOST: ${SMTP_HOST:-'NOT SET'}"
+echo "AWS_BUCKET_NAME: ${AWS_BUCKET_NAME:-'NOT SET'}"
+```
+
+- [ ] Slack Webhook URL 설정
+- [ ] SMTP 설정 확인 (Gmail 앱 비밀번호 사용)
+- [ ] AWS S3 환경 변수 설정
+- [ ] 환경 변수 검증 완료
+
+#### 백업 스케줄러 활성화
+
+```bash
+# 1. 자동 백업 스케줄러 시작
+python -c "
+from backend.app.backup_scheduler import get_backup_scheduler
+scheduler = get_backup_scheduler()
+scheduler.start()
+print('백업 스케줄러 시작됨')
+"
+
+# 2. 스케줄 확인
+python -c "
+from backend.app.backup_scheduler import get_backup_scheduler
+scheduler = get_backup_scheduler()
+status = scheduler.get_status()
+print(f'실행 중: {status[\"is_running\"]}')
+print(f'예약된 작업: {status[\"jobs_count\"]}')
+"
+```
+
+- [ ] 백업 스케줄러 시작 확인
+- [ ] 예약된 작업 목록 확인
+- [ ] 백업 디렉토리 생성 확인 (`${DATA_ROOT}/backups/`)
+
 ---
 
 ## 검증
@@ -321,26 +415,132 @@ curl http://localhost:8000/api/backtests/status/$TASK_ID
 - [ ] 완료 후 결과 확인됨
 - [ ] 결과 파일 생성됨 (`data/tasks/{task_id}/`)
 
-### Step 2: 회귀 테스트
+### Step 2: 포지션 관리 API 테스트
 
 ```bash
-# 1. 기존 75개 테스트 모두 통과 확인
+# 1. 포지션 진입
+curl -X POST http://localhost:8000/api/positions/enter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "BTC_KRW",
+    "quantity": 1.0,
+    "entry_price": 50000,
+    "side": "BUY"
+  }'
+
+# 2. 오픈 포지션 조회
+curl http://localhost:8000/api/positions/open
+
+# 3. 포지션 요약 조회
+curl http://localhost:8000/api/positions/summary
+```
+
+- [ ] 포지션 진입 성공 (200 OK)
+- [ ] 손익 계산 정확함 (수수료 0.1%, 슬리피지 0.02% 반영)
+- [ ] 오픈 포지션 조회 가능
+
+### Step 3: S3 스토리지 테스트
+
+```bash
+# 1. S3 업로드 테스트
+python << 'EOF'
+import asyncio
+from backend.app.storage.s3_provider import S3StorageProvider
+
+async def test():
+    provider = S3StorageProvider(
+        bucket_name="backtest-bucket",
+        region="us-east-1"
+    )
+
+    # 테스트 파일 생성
+    with open("/tmp/test.json", "w") as f:
+        f.write('{"test": "data"}')
+
+    # 업로드
+    result = await provider.upload(
+        file_path="/tmp/test.json",
+        remote_path="test/test.json",
+        metadata={"test": "true"}
+    )
+    print(f"Upload: {result['success']} - ETag: {result['etag']}")
+
+    # 무결성 검증
+    integrity = await provider.verify_integrity(
+        remote_path="test/test.json",
+        local_etag=result['etag']
+    )
+    print(f"Integrity: {integrity['matches']}")
+
+asyncio.run(test())
+EOF
+```
+
+- [ ] S3 업로드 성공
+- [ ] ETag 기반 무결성 검증 성공
+- [ ] 다운로드 가능
+
+### Step 4: 알림 시스템 테스트
+
+```bash
+# 1. Slack 알림 테스트
+python << 'EOF'
+import asyncio
+from backend.app.notifications import SlackNotifier
+
+async def test():
+    notifier = SlackNotifier()
+    result = await notifier.send(
+        title="테스트 알림",
+        message="Phase 3 마이그레이션 테스트입니다.",
+        level="INFO"
+    )
+    print(f"Slack Alert: {result}")
+
+asyncio.run(test())
+EOF
+```
+
+- [ ] Slack 알림 전송 성공
+- [ ] Email 알림 전송 가능
+- [ ] 알림 내용 확인됨
+
+### Step 5: 백업 시스템 테스트
+
+```bash
+# 1. 수동 백업 실행
+./scripts/backup.sh all
+
+# 2. 백업 파일 확인
+ls -lh backups/postgresql/
+ls -lh backups/redis/
+ls -lh backups/results/
+
+# 3. 백업 통계 확인
+./scripts/backup.sh stats
+```
+
+- [ ] PostgreSQL 백업 생성됨
+- [ ] Redis 백업 생성됨
+- [ ] 결과 백업 생성됨
+- [ ] 파일 무결성 검증 (md5sum) 성공
+
+### Step 6: 회귀 테스트
+
+```bash
+# 1. 기존 테스트 모두 통과 확인
 pytest tests/ -v
 
 # 2. 특정 테스트 실행
-pytest tests/test_api.py::TestBacktestEndpoints -v
-pytest tests/test_strategies.py -v
-pytest tests/test_data_loader.py -v
-
-# 3. 비동기 테스트 실행 (신규)
+pytest tests/test_position_manager.py -v
+pytest tests/test_s3_storage.py -v
 pytest tests/test_async_api.py -v
-pytest tests/test_result_manager.py -v
 ```
 
-**기대 결과**: 모든 테스트 통과 ✅
+**기대 결과**: 218/218 테스트 통과 ✅
 
 - [ ] Phase 2 테스트 모두 통과
-- [ ] Phase 3 테스트 모두 통과
+- [ ] Phase 3 테스트 (포지션, S3, 비동기) 모두 통과
 - [ ] 토탈 테스트 커버리지 > 80%
 
 ### Step 3: 성능 기준선 검증
@@ -552,13 +752,44 @@ docker-compose version
 
 ---
 
+---
+
+## 보안 검증
+
+```bash
+# 1. AWS IAM 최소 권한 확인
+aws iam get-role-policy \
+  --role-name backtest-service \
+  --policy-name s3-access
+
+# 2. Redis AUTH 설정 확인 (프로덕션)
+redis-cli CONFIG GET requirepass
+# 반환: "requirepass" "<password>"
+
+# 3. Webhook URL 보안 확인
+# ✅ 환경 변수로만 전달
+# ✅ .env 파일은 .gitignore에 포함
+# ✅ 깃허브 시크릿으로 보호
+
+# 4. 환경 변수 마스킹 확인
+env | grep -E "SLACK|SMTP|AWS_SECRET" | head -0  # 출력 안 됨
+```
+
+- [ ] AWS IAM 최소 권한 정책 설정
+- [ ] Redis AUTH 활성화 (프로덕션)
+- [ ] Webhook URL 환경 변수화
+- [ ] 중요 정보 .gitignore에 포함
+
+---
+
 ## 다음 단계
 
 - [ ] 팀에 마이그레이션 완료 공지
 - [ ] 클라이언트에 새로운 API 사용법 안내
-- [ ] 모니터링 대시보드 설정 (선택사항)
-- [ ] 정기 백업 스케줄 설정
-- [ ] 정리 스크립트 cron 추가
+- [ ] Slack 채널에 알림 설정
+- [ ] 정기 백업 스케줄 설정 (cron)
+- [ ] 모니터링 대시보드 구성 (헬스 체크, 벤치마크)
+- [ ] 운영 플레이북 검토 (docs/coin/mvp/ASYNC_QUEUE_OPERATIONS.md)
 
 ---
 

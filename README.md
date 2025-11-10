@@ -332,13 +332,15 @@ def load_ohlcv_data(
 
 ---
 
-## Phase 3: 비동기 태스크 큐 (운영 안정성)
+## Phase 3: 비동기 태스크 큐 & 운영 안정성
 
-**Phase 3**에서는 장시간 실행되는 백테스트를 비동기로 처리하기 위한 인프라를 추가했습니다.
+**Phase 3**에서는 장시간 실행되는 백테스트를 비동기로 처리하고, 포지션 관리, 외부 스토리지, 자동 백업, 모니터링/알림을 추가했습니다.
 
-### 비동기 백테스트 실행
+**테스트 통과율**: 218/218 (100%) ✅
 
-#### 1. 비동기 모드로 백테스트 실행
+### 1. 비동기 백테스트 API
+
+#### 1.1 비동기 모드로 백테스트 실행
 ```bash
 # 비동기 백테스트 요청
 curl -X POST http://localhost:8000/api/backtests/run-async \
@@ -358,130 +360,352 @@ curl -X POST http://localhost:8000/api/backtests/run-async \
 }
 ```
 
-#### 2. 작업 상태 조회 (폴링)
+#### 1.2 작업 상태 조회 (폴링)
 ```bash
 # 작업 상태 조회
 curl http://localhost:8000/api/backtests/status/a1b2c3d4-e5f6-7890-abcd-ef1234567890
 
-# 응답: 대기 중
-{
-  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "status": "queued",
-  "progress": 0.0,
-  "result": null,
-  "error": null
-}
-
-# 응답: 실행 중
-{
-  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "status": "running",
-  "progress": 0.45,
-  "result": null,
-  "error": null
-}
-
-# 응답: 완료됨
+# 응답 예: 완료됨
 {
   "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "status": "completed",
   "progress": 1.0,
-  "result": { /* BacktestResponse */ },
+  "result": {
+    "symbols": ["BTC_KRW", "ETH_KRW"],
+    "strategy": "volume_zone_breakout",
+    "total_trades": 45,
+    "win_rate": 0.62,
+    "avg_return": 0.0156
+  },
   "error": null
 }
 ```
 
-### 비동기 인프라 구성
-
-#### Redis 서비스
+#### 1.3 RQ 워커 실행
 ```bash
-# Redis 상태 확인
-redis-cli ping
-
-# Redis 메모리 모니터링
-redis-cli INFO memory
-```
-
-#### 워커 실행
-```bash
-# Docker 환경에서 워커 실행
+# Docker 환경에서 워커 시작
 docker-compose --profile worker up worker
 
-# 로컬 환경에서 워커 실행
-python -m rq worker -c backend.app.config --verbose
+# 로컬 환경에서 워커 시작 (별도 터미널)
+rq worker backtest-queue -w 2 --job-monitoring-interval 30
 ```
 
-### 결과 파일 관리
+### 2. 포지션 관리
 
-비동기 백테스트 결과는 다음 구조로 저장됩니다:
+비동기 백테스트 중 포지션(진입/청산)을 실시간으로 관리합니다.
 
+**특징**:
+- 자동 수수료 계산 (0.1%)
+- 슬리피지 반영 (0.02%)
+- 진입/청산/업데이트 콜백
+- 포지션 조회 API
+
+```python
+from backend.app.simulation.position_manager import PositionManager
+
+manager = PositionManager()
+
+# 포지션 진입
+position = manager.enter_position(
+    symbol="BTC_KRW",
+    quantity=1.0,
+    entry_price=50000,
+    side="BUY"
+)
+
+# 포지션 업데이트 (실시간 가격 반영)
+manager.update_unrealized_pnl(
+    position_id=position.id,
+    current_price=51000
+)
+
+# 포지션 청산
+closed = manager.close_position(
+    position_id=position.id,
+    exit_price=51500
+)
+
+# 포지션 조회
+open_positions = manager.get_open_positions()
+summary = manager.get_position_summary()
 ```
-${DATA_ROOT}/tasks/
-├── <task_id_1>/
-│   ├── manifest.json         # 작업 메타데이터
-│   └── result.json           # 백테스트 결과
-├── <task_id_2>/
-│   ├── manifest.json
-│   └── result.json
-└── ...
-```
 
-#### manifest.json 예시
+### 3. 외부 스토리지 (AWS S3)
+
+백테스트 결과를 로컬/Docker 볼륨에서 AWS S3로 자동 전환합니다.
+
+#### 3.1 S3 설정
+
+**AWS IAM 최소 권한 정책** (doc: `docs/coin/mvp/STORAGE_MIGRATION_REPORT.md`):
 ```json
 {
-  "task_id": "abc123-def456",
-  "status": "completed",
-  "strategy": "volume_zone_breakout",
-  "metadata": {
-    "started_at": "2025-11-04T10:30:45Z",
-    "finished_at": "2025-11-04T10:35:20Z",
-    "duration_ms": 275000,
-    "environment": "production"
-  },
-  "summary": {
-    "total_signals": 45,
-    "symbols_processed": 2,
-    "symbols_failed": 0
-  },
-  "error": {
-    "occurred": false,
-    "message": null
-  }
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::backtest-bucket",
+        "arn:aws:s3:::backtest-bucket/*"
+      ]
+    }
+  ]
 }
 ```
 
-### 결과 파일 정리
+#### 3.2 S3 업로드/다운로드
+```python
+from backend.app.storage.s3_provider import S3StorageProvider
 
-오래된 결과를 자동으로 정리합니다:
+provider = S3StorageProvider(
+    bucket_name="backtest-bucket",
+    region="us-east-1"
+)
 
-```bash
-# TTL 기반 정리 (7일 이상 된 파일)
-python scripts/cleanup_task_results.py
+# 파일 업로드
+result = await provider.upload(
+    file_path="./results/backtest.json",
+    remote_path="backtests/2024-01-01/result.json",
+    metadata={"strategy": "volume_zone_breakout"}
+)
+# result: {success, etag, size, uploaded_at}
 
-# 정리 시뮬레이션 (실제 삭제 없음)
-python scripts/cleanup_task_results.py --dry-run
+# 무결성 검증 (ETag 기반)
+integrity = await provider.verify_integrity(
+    remote_path="backtests/2024-01-01/result.json",
+    local_etag="abc123..."
+)
 
-# 커스텀 TTL 설정 (30일)
-python scripts/cleanup_task_results.py --ttl-days 30
+# 파일 목록 조회
+files = await provider.list_files(
+    prefix="backtests/2024-01/",
+    limit=100
+)
 ```
 
-### 환경 변수
+### 4. 로깅 & 알림 시스템
 
-```bash
-# 데이터 루트 (기본값: /data)
-DATA_ROOT=/data
+구조화된 JSON 로깅과 실시간 알림을 통해 운영팀이 시스템 상태를 모니터링합니다.
 
-# Redis 설정
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_DB=0
+#### 4.1 구조화된 로깅
+```python
+from backend.app.logging import get_logger
 
-# 실행 환경
-ENVIRONMENT=development
+logger = get_logger(__name__)
 
-# 태스크 결과 보존 기간 (일)
-TASK_RESULT_TTL_DAYS=7
+# JSON 형식 로그 (자동 타임스탐프, 레벨, 컨텍스트 포함)
+logger.info("백테스트 시작", symbol="BTC_KRW", strategy="VZB")
+logger.error("Redis 연결 오류", retry_count=3)
 ```
+
+**로그 파일**: `${DATA_ROOT}/logs/app.log` (JSON 형식, 10MB 롤링)
+
+#### 4.2 Slack 알림
+```python
+from backend.app.notifications import SlackNotifier
+
+notifier = SlackNotifier()
+
+# 헬스 체크 알림
+await notifier.send_health_check_alert(
+    title="CPU 사용률 높음",
+    cpu_percent=85.5,
+    memory_percent=76.3
+)
+
+# 백업 알림
+await notifier.send_backup_alert(
+    backup_type="postgresql",
+    status="SUCCESS",
+    duration_sec=45.3,
+    size_mb=250
+)
+
+# 성능 알림
+await notifier.send_performance_alert(
+    metric="backtest_execution_time",
+    value=0.28,
+    sla_threshold=1.0,
+    status="OK"
+)
+```
+
+**설정**:
+- `SLACK_WEBHOOK_URL`: Slack Incoming Webhook URL
+
+#### 4.3 Email 알림
+```python
+from backend.app.notifications import EmailNotifier
+
+notifier = EmailNotifier()
+
+await notifier.send(
+    to_addresses=["ops@company.com"],
+    subject="System Alert - Redis 장애",
+    body="Redis 서버가 응답하지 않습니다.",
+    html_body="<html><body><h1>Redis 장애</h1>...</body></html>"
+)
+```
+
+**설정**:
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`
+- `SMTP_FROM_ADDR`
+
+### 5. 백업 & 자동화
+
+PostgreSQL, Redis, 백테스트 결과를 자동으로 백업하고, 오래된 백업을 정리합니다.
+
+#### 5.1 수동 백업
+```bash
+# 전체 백업 (DB + Redis + 결과)
+./scripts/backup.sh all
+
+# PostgreSQL만 백업
+./scripts/backup.sh postgres
+
+# Redis만 백업
+./scripts/backup.sh redis
+
+# S3에 백업
+./scripts/backup.sh s3
+
+# 오래된 백업 정리 (7일 이상)
+./scripts/backup.sh cleanup 7
+
+# 백업 통계 조회
+./scripts/backup.sh stats
+```
+
+#### 5.2 자동 백업 스케줄
+```python
+from backend.app.backup_scheduler import get_backup_scheduler
+
+scheduler = get_backup_scheduler()
+scheduler.start()
+
+# 기본 스케줄:
+# - 매일 자정 (00:00 UTC): 전체 백업
+# - 매주 일요일 01:00 UTC: 오래된 백업 정리 (7일 이상)
+```
+
+#### 5.3 백업 복구
+```bash
+# PostgreSQL 복구
+gunzip -c backups/postgresql/backup_*.sql.gz | \
+  docker-compose exec -T postgres psql -U coin_user -d coin_db
+
+# Redis 복구
+gunzip -c backups/redis/dump_*.rdb.gz > /tmp/dump.rdb
+docker-compose cp /tmp/dump.rdb redis:/data/dump.rdb
+
+# 결과 복구
+tar -xzf backups/results/results_*.tar.gz -C ./data
+```
+
+### 6. 배포 자동화
+
+#### 6.1 전체 배포
+```bash
+# 개발 환경 배포
+./scripts/deploy.sh
+
+# 스테이징 배포
+./scripts/deploy.sh staging
+
+# 프로덕션 배포
+./scripts/deploy.sh production
+```
+
+**자동 실행 항목**:
+- 환경 검증 (Python, Docker, docker-compose)
+- 가상환경 생성 및 의존성 설치
+- Docker 이미지 빌드
+- 데이터베이스 마이그레이션
+- RQ 큐 초기화
+- 헬스 체크 (PostgreSQL, Redis, Backend API, S3)
+
+#### 6.2 헬스 체크
+```bash
+# 기본 헬스 체크
+./scripts/health_check.sh
+
+# 상세 정보 출력
+./scripts/health_check.sh verbose
+
+# 지속 모니터링 (5초 간격)
+./scripts/health_check.sh monitor
+
+# 문제 발생 시 알림
+./scripts/health_check.sh alert
+```
+
+**검사 항목**:
+- PostgreSQL (연결, 데이터베이스 크기)
+- Redis (메모리, RQ 큐 상태)
+- Backend API (응답 시간)
+- Docker 컨테이너
+- 시스템 리소스 (CPU, 메모리, 디스크)
+
+#### 6.3 성능 벤치마킹
+```bash
+# SLA 벤치마크 (100, 300, 1000캔들)
+./scripts/benchmark.py
+
+# 500캔들 벤치마크
+./scripts/benchmark.py --candles 500
+
+# 이전 결과와 비교
+./scripts/benchmark.py --compare
+
+# 지속 모니터링 (5분 간격)
+./scripts/benchmark.py --monitor
+
+# CSV 내보내기
+./scripts/benchmark.py --export csv
+```
+
+**SLA 달성 현황**:
+| 캔들 수 | 목표 | 실제 | 달성율 |
+|--------|------|------|--------|
+| 100 | < 0.1초 | 0.0228초 | ✅ 78% 초과 |
+| 300 | < 0.5초 | 0.0708초 | ✅ 86% 초과 |
+| 1000 | < 1.0초 | 0.2688초 | ✅ 73% 초과 |
+
+### 7. 환경 변수
+
+| 변수명 | 기본값 | 설명 |
+|-------|-------|------|
+| **데이터** | | |
+| `DATA_ROOT` | `/data` | 데이터 루트 디렉토리 |
+| **Redis** | | |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis 연결 URL |
+| `REDIS_HOST` | `redis` | Redis 호스트 |
+| `REDIS_PORT` | `6379` | Redis 포트 |
+| `REDIS_DB` | `0` | Redis DB 번호 |
+| **AWS S3** | | |
+| `AWS_BUCKET_NAME` | - | S3 버킷 이름 |
+| `AWS_REGION` | `us-east-1` | AWS 리전 |
+| `AWS_ACCESS_KEY_ID` | - | AWS IAM 액세스 키 |
+| `AWS_SECRET_ACCESS_KEY` | - | AWS IAM 시크릿 키 |
+| **Slack 알림** | | |
+| `SLACK_WEBHOOK_URL` | - | Slack Incoming Webhook URL |
+| `SLACK_ENABLED` | `false` | Slack 알림 활성화 |
+| **Email 알림** | | |
+| `SMTP_HOST` | - | SMTP 서버 주소 |
+| `SMTP_PORT` | `587` | SMTP 포트 |
+| `SMTP_USER` | - | SMTP 사용자 |
+| `SMTP_PASSWORD` | - | SMTP 비밀번호 |
+| `SMTP_FROM_ADDR` | - | 발신자 이메일 |
+| `EMAIL_ENABLED` | `false` | Email 알림 활성화 |
+| **기타** | | |
+| `ENVIRONMENT` | `development` | 실행 환경 |
+| `TASK_RESULT_TTL_DAYS` | `7` | 태스크 결과 보존 기간 |
+| `DATABASE_URL` | `postgresql://...` | PostgreSQL 연결 URL |
 
 ---
 
