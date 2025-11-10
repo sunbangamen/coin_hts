@@ -232,6 +232,7 @@ class TestPositionClosing:
             strategy_name='volume_zone_breakout',
             exit_price=51000.0,
             timestamp=datetime(2024, 1, 1, 13, 0, 0),
+            slippage_amount=0.0,  # 테스트를 위해 슬리피지 0으로 설정
         )
 
         assert trade_id == 456
@@ -296,6 +297,7 @@ class TestPositionClosing:
             strategy_name='strategy1',
             exit_price=49000.0,  # 1000 하락
             timestamp=datetime.now(),
+            slippage_amount=0.0,  # 테스트를 위해 슬리피지 0으로 설정
         )
 
         # 거래 정보 검증
@@ -412,6 +414,7 @@ class TestUnrealizedPnLUpdate:
         # 캔들 데이터로 업데이트
         candle = CandleData(
             symbol='KRW-BTC',
+            timeframe='1h',
             timestamp=datetime.now(),
             open=50000.0,
             high=51500.0,
@@ -460,6 +463,7 @@ class TestUnrealizedPnLUpdate:
         # 캔들 데이터로 업데이트
         candle = CandleData(
             symbol='KRW-BTC',
+            timeframe='1h',
             timestamp=datetime.now(),
             open=50000.0,
             high=51500.0,
@@ -622,7 +626,7 @@ class TestPositionQuerying:
             entry_price=3000.0,
             quantity=1.0,
         )
-        position2.update_price(2900.0)
+        position2.update_price(3100.0)  # 수익성 포지션으로 변경
 
         manager.positions['KRW-BTC:strategy1'] = position1
         manager.positions['KRW-ETH:strategy1'] = position2

@@ -38,6 +38,39 @@
 
 ### 2.1 API 비동기 (3개 실패 → 0개) ✅ 전체 스펙 재확인 완료
 
+**InMemoryRedis 호환성 테스트** (13/13 ✅):
+
+```bash
+# 표준 실행 명령어
+source venv/bin/activate && export PYTHONPATH=. && python -m pytest tests/test_in_memory_redis.py -v
+```
+
+```
+tests/test_in_memory_redis.py::TestInMemoryRedisHsetCompatibility (9개 테스트):
+  ✅ test_hset_single_field_addition
+  ✅ test_hset_field_update
+  ✅ test_hset_mapping_multiple_fields
+  ✅ test_hset_combined_key_value_and_mapping
+  ✅ test_hgetall_retrieves_all_fields
+  ✅ test_hset_mixed_new_and_existing_fields
+  ✅ test_string_operations
+  ✅ test_empty_hash_operations
+  ✅ test_redis_compatibility_comprehensive
+
+tests/test_in_memory_redis.py::test_hset_mapping_field_count (4개 parametrized):
+  ✅ test_hset_mapping_field_count[all_new_fields]
+  ✅ test_hset_mapping_field_count[mixed_update_and_new]
+  ✅ test_hset_mapping_field_count[one_new_among_updates]
+  ✅ test_hset_mapping_field_count[disjoint_fields]
+```
+
+**최종 실행 결과** (2025-11-08 18:45 UTC):
+```
+======================= 13 passed, 13 warnings in 0.46s ========================
+```
+
+---
+
 **통과한 모든 테스트** (19/19):
 
 ```
@@ -76,9 +109,9 @@ TestCancelBacktestTask (6개 테스트):
 source venv/bin/activate && export PYTHONPATH=. && python -m pytest tests/test_async_api.py -v
 ```
 
-**최종 실행 결과** (2025-11-08 18:30 UTC):
+**최종 실행 결과** (2025-11-08 18:45 UTC):
 ```
-======================= 19 passed, 27 warnings in 0.54s ========================
+======================= 19 passed, 27 warnings in 0.51s ========================
 ```
 
 **개선 과정**:

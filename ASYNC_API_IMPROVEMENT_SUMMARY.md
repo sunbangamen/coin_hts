@@ -1,8 +1,9 @@
 # Task 3.2 비동기 API - 테스트 재현성 및 검증 강화
 
 **작성일**: 2025-11-08 18:00 UTC
-**상태**: ✅ 완료
-**범위**: Message 9 추가 개선사항 구현
+**마지막 업데이트**: 2025-11-08 18:45 UTC
+**상태**: ✅ 완료 (Message 10 최종화 포함)
+**범위**: Message 9 추가 개선사항 구현 + Message 10 테스트 수집 및 문서 동기화
 
 ---
 
@@ -215,23 +216,36 @@ def hset(self, name, key=None, value=None, mapping=None):
     return added_count
 ```
 
-**테스트 커버리지**:
-```python
-def test_in_memory_redis_hset_compatibility():
-    """InMemoryRedis.hset이 Redis 호환성을 갖는지 검증"""
-    redis = InMemoryRedis()
+**테스트 커버리지** (tests/test_in_memory_redis.py로 이동):
 
-    # 단일 필드 설정 (추가 → 반환값 1)
-    assert redis.hset("test_hash", "field1", "value1") == 1
+pytest 수집 가능한 별도 모듈로 이동하여 13개 테스트로 확장:
 
-    # 같은 필드 업데이트 (업데이트 → 반환값 0)
-    assert redis.hset("test_hash", "field1", "updated") == 0
+```bash
+# 표준 실행 명령어
+source venv/bin/activate && export PYTHONPATH=. && python -m pytest tests/test_in_memory_redis.py -v
+```
 
-    # mapping으로 여러 필드 설정 (추가 2개 → 반환값 2)
-    assert redis.hset("test_hash", mapping={"field2": "v2", "field3": "v3"}) == 2
+**테스트 구성**:
+- `TestInMemoryRedisHsetCompatibility`: 9개 메서드 테스트
+  - test_hset_single_field_addition
+  - test_hset_field_update
+  - test_hset_mapping_multiple_fields
+  - test_hset_combined_key_value_and_mapping
+  - test_hgetall_retrieves_all_fields
+  - test_hset_mixed_new_and_existing_fields
+  - test_string_operations
+  - test_empty_hash_operations
+  - test_redis_compatibility_comprehensive
 
-    # key/value + mapping 동시 설정 (추가 2개 → 반환값 2)
-    assert redis.hset("test_hash", "field4", "v4", mapping={"field5": "v5"}) == 2
+- `test_hset_mapping_field_count`: 4개 parametrized 시나리오
+  - all_new_fields
+  - mixed_update_and_new
+  - one_new_among_updates
+  - disjoint_fields
+
+**최종 실행 결과** (2025-11-08 18:45 UTC):
+```
+======================= 13 passed, 13 warnings in 0.46s ========================
 ```
 
 **사용 예시**:
@@ -314,9 +328,14 @@ tests/test_async_api.py::TestCancelBacktestTask::test_cancel_and_verify_state_co
    - 정제 작업 섹션 업데이트
    - PYTHONPATH 표준화 추가
 
-### 신규 파일 (1개)
+### 신규 파일 (2개)
 
-1. **ASYNC_API_IMPROVEMENT_SUMMARY.md** (본 문서)
+1. **tests/test_in_memory_redis.py** (Message 10 추가)
+   - InMemoryRedis 호환성 단위 테스트 (pytest 수집 가능)
+   - 13개 테스트: 9개 메서드 + 4개 parametrized 시나리오
+   - 표준 실행: `source venv/bin/activate && export PYTHONPATH=. && python -m pytest tests/test_in_memory_redis.py -v`
+
+2. **ASYNC_API_IMPROVEMENT_SUMMARY.md** (본 문서)
    - 추가 개선사항 상세 기록
 
 ---
@@ -385,6 +404,13 @@ Task 3.2는 다음 수준에서 완성되었습니다:
 **Level 1** ✅ 기본 구현: 비동기 API 3개 엔드포인트 (제출/조회/취소)
 **Level 2** ✅ 정제 작업: 상태 스키마/문서 동기화, 테스트 안정화
 **Level 3** ✅ 심화 개선: **테스트 재현성 확보, 검증 강화** ← 완료
+**Level 4** ✅ 최종화: **테스트 수집 및 문서 동기화** (Message 10) ← 완료
+
+### 완성 요약 (Message 10)
+- ✅ InMemoryRedis 테스트를 pytest 수집 가능한 별도 모듈로 이동
+- ✅ pytest 수집 확인: `python -m pytest tests/test_in_memory_redis.py -v` → 13/13 passed
+- ✅ 회귀 검증: `python -m pytest tests/test_async_api.py -v` → 19/19 passed (No regression)
+- ✅ 문서 업데이트: TEST_RESULTS_SUMMARY.md, ASYNC_API_IMPROVEMENT_SUMMARY.md 동기화
 
 ### Week 2 준비
 - Task 3.3: 포지션 관리 기능 구현
