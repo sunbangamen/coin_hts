@@ -525,7 +525,232 @@ benchmarks/benchmark_20251110_144500.csv   # CSV 형식
 
 ---
 
-## 8. 다음 단계 (Task 3.5-3.8)
+## 8. 백업 및 모니터링 시스템 (Task 3.7)
+
+### 📊 구조화된 JSON 로깅
+
+**목적**: 모든 로그를 JSON 형식으로 기록하여 검색 및 분석을 용이하게
+
+**파일**: `backend/app/logging/structured_logger.py`
+
+**기능**:
+- `StructuredLogger`: JSON 형식 로깅 클래스
+- 자동 타임스탐프, 레벨, 로거명, 모듈 정보 포함
+- 파일 및 콘솔 핸들러 지원
+- 컨텍스트 정보 추가 가능
+- Rotating file handler (10MB, 10 백업 유지)
+
+**로그 출력 예시**:
+```json
+{
+  "timestamp": "2025-11-10T14:50:00.123Z",
+  "level": "INFO",
+  "logger": "backend.app.simulation.strategy_runner",
+  "message": "Strategy registered: KRW-BTC:volume_zone_breakout",
+  "context": {
+    "symbol": "KRW-BTC",
+    "strategy": "volume_zone_breakout"
+  }
+}
+```
+
+**사용 예시**:
+```python
+from backend.app.logging import get_logger
+
+logger = get_logger(__name__)
+logger.info("전략 등록", symbol="KRW-BTC", strategy="VZB")
+```
+
+---
+
+### 🚨 알림 시스템
+
+**파일**:
+- `backend/app/notifications/slack_notifier.py`
+- `backend/app/notifications/email_notifier.py`
+
+#### Slack 알림
+```python
+from backend.app.notifications import SlackNotifier
+
+notifier = SlackNotifier()
+await notifier.send(
+    title="Health Check Alert",
+    message="CPU usage is high",
+    level="WARNING",
+    details={"CPU": "85%", "Memory": "76%"}
+)
+```
+
+**기능**:
+- Webhook 기반 메시지 전송
+- 레벨별 색상 표시 (INFO, WARNING, ERROR, CRITICAL)
+- 상세 정보 필드 지원
+- 헬스 체크, 백업, 성능 알림 전용 메서드
+
+#### Email 알림
+```python
+from backend.app.notifications import EmailNotifier
+
+notifier = EmailNotifier()
+notifier.send(
+    to_addresses=["ops@example.com"],
+    subject="System Alert",
+    body="Text content",
+    html_body="<html>HTML content</html>"
+)
+```
+
+**기능**:
+- SMTP 기반 이메일 전송
+- HTML/텍스트 혼합 지원
+- 헬스 체크, 백업, 성능 알림 템플릿
+
+**환경 변수 설정**:
+```bash
+# Slack
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Email (SMTP)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM_ADDR=ops@company.com
+```
+
+---
+
+### ⏰ 자동 백업 스케줄러
+
+**파일**: `backend/app/backup_scheduler.py`
+
+**기능**:
+- APScheduler 기반 정기적 백업 자동화
+- Cron 표현식 지원
+- 실패 시 자동 재시도
+- 백업 상태 추적 및 로깅
+
+**기본 스케줄**:
+- **매일 자정 (00:00 UTC)**: 전체 백업 (PostgreSQL, Redis, 결과)
+- **매주 일요일 01:00 UTC**: 오래된 백업 정리 (7일 이상)
+
+**사용 예시**:
+```python
+from backend.app.backup_scheduler import get_backup_scheduler
+
+scheduler = get_backup_scheduler()
+
+# 스케줄러 시작
+scheduler.start()
+
+# 백업 작업 추가
+scheduler.add_backup_job(
+    job_id="custom_backup",
+    backup_type="postgres",
+    trigger="cron",
+    hour=2,
+    minute=0,
+)
+
+# 상태 확인
+status = scheduler.get_status()
+print(f"실행 중: {status['is_running']}")
+print(f"작업 수: {status['jobs_count']}")
+```
+
+---
+
+### 📡 모니터링 API 엔드포인트
+
+**파일**: `backend/app/routers/monitoring.py`
+
+#### 로그 조회
+```bash
+# 최근 로그 100개 조회
+GET /api/v1/monitoring/logs?limit=100
+
+# 특정 로거의 ERROR 레벨 로그
+GET /api/v1/monitoring/logs?logger_name=backtest&level=ERROR
+
+# 로그 요약 통계 (최근 24시간)
+GET /api/v1/monitoring/logs/summary?hours=24
+```
+
+#### 백업 상태
+```bash
+# 전체 백업 목록
+GET /api/v1/monitoring/backups
+
+# PostgreSQL 백업만 조회
+GET /api/v1/monitoring/backups?backup_type=postgresql
+
+# 백업 요약 (타입별 통계)
+GET /api/v1/monitoring/backups/summary
+```
+
+#### 스케줄러 상태
+```bash
+# 백업 스케줄러 상태 조회
+GET /api/v1/monitoring/scheduler
+```
+
+응답 예시:
+```json
+{
+  "status": "success",
+  "data": {
+    "is_running": true,
+    "jobs_count": 2,
+    "jobs": {
+      "daily_full_backup": {
+        "backup_type": "all",
+        "trigger": "cron",
+        "hour": 0,
+        "minute": 0,
+        "status": "scheduled"
+      }
+    }
+  }
+}
+```
+
+#### 알림 설정
+```bash
+# 알림 설정 상태 조회
+GET /api/v1/monitoring/alerts/config
+```
+
+#### 헬스 체크
+```bash
+# 시스템 헬스 상태 조회
+GET /api/v1/monitoring/health
+```
+
+응답 예시:
+```json
+{
+  "status": "success",
+  "health": {
+    "overall": "WARNING",
+    "cpu_percent": 82.5,
+    "memory": {
+      "percent": 76.3,
+      "available_mb": 4096.5
+    },
+    "disk": {
+      "percent": 45.2,
+      "free_gb": 120.3
+    }
+  },
+  "warnings": ["CPU 사용률 높음: 82.5%"]
+}
+```
+
+---
+
+## 9. 다음 단계 (Task 3.8)
 
 ### Task 3.5: 결과 저장 개선 (예정)
 - PostgreSQL + Parquet 마이그레이션
@@ -539,10 +764,11 @@ benchmarks/benchmark_20251110_144500.csv   # CSV 형식
 - 트러블슈팅 (완료 - 본 문서)
 - 자동화 스크립트 (완료 - 2025-11-10)
 
-### Task 3.7: 백업 및 모니터링 (예정)
-- 자동 백업 스크립트 (PostgreSQL, S3)
-- 구조화된 로깅 (JSON 형식)
-- 알림 시스템 (Slack, Email)
+### ✅ Task 3.7: 백업 및 모니터링 (완료)
+- 구조화된 JSON 로깅 (완료)
+- 알림 시스템 - Slack/Email (완료)
+- 자동 백업 스케줄러 (완료)
+- 모니터링 API 엔드포인트 (완료)
 
 ### Task 3.8: 통합 테스트 (예정)
 - e2e 테스트 (backtesting 전체 흐름)
@@ -551,7 +777,7 @@ benchmarks/benchmark_20251110_144500.csv   # CSV 형식
 
 ---
 
-## 9. 문의 및 피드백
+## 10. 문의 및 피드백
 
 - Issue: https://github.com/sunbangamen/coin_hts/issues/29
 - 메인테이너: @sunbangamen
@@ -559,6 +785,7 @@ benchmarks/benchmark_20251110_144500.csv   # CSV 형식
 
 ---
 
-**상태**: Phase 3 진행 중 (Task 3.5 완료, 3.6 완료, 3.7-3.8 예정)
+**상태**: Phase 3 진행 중 (Task 3.5 완료, 3.6 완료, 3.7 완료, 3.8 예정)
 **목표 완료**: 2025-11-20
-**마지막 업데이트**: 2025-11-10 (Task 3.6 운영 자동화 스크립트 완료)
+**마지막 업데이트**: 2025-11-10 (Task 3.7 백업 및 모니터링 완료)
+**테스트 현황**: 203/203 (100.0%) ✅
