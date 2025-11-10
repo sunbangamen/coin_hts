@@ -21,13 +21,26 @@ class ResultManager:
 
     def __init__(self, storage=None, data_root: Optional[str] = None):
         """
-        ResultManager 초기화 (의존성 주입)
+        ResultManager 초기화 (의존성 주입 + PostgreSQL 기본값)
 
         Args:
             storage: ResultStorage 인스턴스 (선택사항)
-                     None인 경우 파일 기반 동작 유지
+                     None인 경우 PostgreSQL 스토리지 시도 후 파일 기반으로 폴백
             data_root: 데이터 루트 디렉토리 (선택사항)
         """
+        # storage가 None인 경우 PostgreSQL 기본값 시도 (향후 구현)
+        if storage is None:
+            try:
+                from backend.app.storage.result_storage import PostgreSQLResultStorage
+                db_url = os.getenv("DATABASE_URL")
+                if db_url:
+                    storage = PostgreSQLResultStorage(db_url)
+                    logger.info("PostgreSQL storage initialized from DATABASE_URL")
+                else:
+                    logger.info("DATABASE_URL not set, falling back to file-based mode")
+            except Exception as e:
+                logger.warning(f"PostgreSQL storage initialization failed: {e}, using file-based mode")
+
         self.storage = storage
         self.data_root = data_root
         if storage:

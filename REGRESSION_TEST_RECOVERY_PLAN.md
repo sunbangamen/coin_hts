@@ -480,11 +480,17 @@ class ResultManager:
         return await self.storage.cleanup_old_results(days)
 ```
 
-**체크리스트**:
-- [ ] ResultManager.__init__() 의존성 주입 추가
-- [ ] save_manifest_file() 스토리지 레이어 호출로 변경
-- [ ] cleanup_old_results() 스토리지 레이어 호출로 변경
-- [ ] pytest tests/test_result_manager.py -v 실행 → 4건 통과 확인
+**체크리스트** (✅ Step 2 완료 - 2025-11-10):
+- [x] ResultManager.__init__() 의존성 주입 추가 (PostgreSQL 기본값 포함)
+- [x] save_manifest_file() 스토리지 레이어 호출로 변경
+- [x] cleanup_old_results() 스토리지 레이어 호출로 변경
+- [x] pytest tests/test_result_manager.py -v 실행 → **5건 모두 통과** ✅
+
+**구현 결과**:
+- 총 테스트: 203개
+- 통과: 196개
+- 실패: 7개 (모두 test_strategy_runner.py)
+- 통과율: 96.6%
 
 ---
 
