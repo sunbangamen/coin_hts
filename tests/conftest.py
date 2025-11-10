@@ -351,3 +351,38 @@ def caplog_setup(caplog):
     """
     caplog.set_level("DEBUG")
     return caplog
+
+
+# ============================================================================
+# Task 3.5: 결과 저장소 픽스처 (ResultStorage 테스트용)
+# ============================================================================
+
+@pytest.fixture
+def temp_result_storage(tmp_path):
+    """
+    테스트용 임시 결과 저장소 (SQLite 기반)
+
+    각 테스트마다 독립적인 데이터베이스를 제공하여
+    테스트 간 간섭을 방지합니다.
+    """
+    from backend.app.storage.result_storage import SQLiteResultStorage
+
+    db_path = tmp_path / "test_results.db"
+    storage = SQLiteResultStorage(db_path=str(db_path))
+    return storage
+
+
+@pytest.fixture
+def result_manager(temp_result_storage, tmp_path):
+    """
+    의존성 주입된 ResultManager (Task 3.5)
+
+    테스트에서 SQLite 기반 저장소를 사용하고,
+    tmp_path를 data_root로 받아 디스크 접근을 테스트 디렉토리로 제한합니다.
+    """
+    from backend.app.result_manager import ResultManager
+
+    # ResultManager를 temp_result_storage와 함께 생성
+    # (의존성 주입 패턴: storage + data_root)
+    manager = ResultManager(storage=temp_result_storage, data_root=str(tmp_path))
+    return manager

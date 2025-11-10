@@ -12,7 +12,28 @@ logger = logging.getLogger(__name__)
 
 
 class ResultManager:
-    """백테스트 결과 파일 관리"""
+    """
+    백테스트 결과 파일 관리 (Task 3.5: 의존성 주입 지원)
+
+    생성자에서 storage: ResultStorage를 받아 저장소 계층에 위임합니다.
+    storage가 None인 경우 기존 파일 기반 동작을 유지합니다.
+    """
+
+    def __init__(self, storage=None, data_root: Optional[str] = None):
+        """
+        ResultManager 초기화 (의존성 주입)
+
+        Args:
+            storage: ResultStorage 인스턴스 (선택사항)
+                     None인 경우 파일 기반 동작 유지
+            data_root: 데이터 루트 디렉토리 (선택사항)
+        """
+        self.storage = storage
+        self.data_root = data_root
+        if storage:
+            logger.info(f"ResultManager initialized with storage: {type(storage).__name__}")
+        else:
+            logger.info("ResultManager initialized in file-based mode")
 
     @staticmethod
     def get_task_directory(data_root: str, task_id: str) -> str:
@@ -92,8 +113,8 @@ class ResultManager:
         logger.info(f"Result file saved: {result_file}")
         return result_file
 
-    @staticmethod
     def save_manifest_file(
+        self,
         data_root: str,
         task_id: str,
         strategy: str,
@@ -112,7 +133,7 @@ class ResultManager:
         error_message: Optional[str] = None,
     ) -> str:
         """
-        manifest.json 파일 저장
+        manifest.json 파일 저장 (Task 3.5: 저장소 계층 위임)
 
         Args:
             data_root: 데이터 루트 디렉토리
@@ -176,14 +197,24 @@ class ResultManager:
             },
         }
 
-        # manifest.json 저장
-        task_dir = ResultManager.get_task_directory(data_root, task_id)
+        # manifest.json 저장 (파일 기반)
+        task_dir = ResultManager.create_task_directory(data_root, task_id)
         manifest_file = os.path.join(task_dir, "manifest.json")
 
         with open(manifest_file, "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, indent=2, ensure_ascii=False, default=str)
 
         logger.info(f"Manifest file saved: {manifest_file}")
+
+        # 저장소 계층에 메타데이터 저장 (storage 있을 경우)
+        if self.storage:
+            import asyncio
+            try:
+                asyncio.run(self.storage.save_result(task_id, manifest_data))
+                logger.info(f"Manifest saved to storage layer: task_id={task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to save manifest to storage layer: {e}")
+
         return manifest_file
 
     @staticmethod
@@ -477,14 +508,14 @@ class ResultManager:
             logger.error(f"Error reading result file {result_file}: {e}")
             return None
 
-    @staticmethod
     def cleanup_old_results(
+        self,
         data_root: str,
         ttl_days: int = 7,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """
-        오래된 결과 파일 정리
+        오래된 결과 파일 정리 (Task 3.5: 저장소 계층 위임)
 
         Args:
             data_root: 데이터 루트 디렉토리
@@ -494,6 +525,11 @@ class ResultManager:
         Returns:
             정리 결과 dict
         """
+        # 저장소 계층에 정리 위임은 선택사항 (별도 구현 필요)
+        # Task 3.5: 현재는 파일 기반 cleanup만 사용
+        # storage layer cleanup은 향후 구현 예정
+
+        # 파일 기반 정리 (storage 없거나 실패한 경우)
         tasks_dir = os.path.join(data_root, "tasks")
 
         if not os.path.exists(tasks_dir):

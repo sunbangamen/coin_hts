@@ -1,14 +1,15 @@
 """
-¤ ¬À \tT ¨È
-
-x€ ¤ ¬À(S3, NFS, OneDrive ñ)@ Á8‘©X0 \
-”Á x0˜t¤  l´| õiÈä.
+ì €ì¥ì†Œ ì œê³µì (S3, NFS, OneDrive ë“±) ë° ê²°ê³¼ ì €ì¥ ì¸í„°í˜ì´ìŠ¤
 """
 
 from backend.app.storage.base import StorageProvider
 from backend.app.storage.s3_provider import S3StorageProvider
+from backend.app.storage.result_storage import ResultStorage, SQLiteResultStorage, PostgreSQLResultStorage
 
 __all__ = [
     "StorageProvider",
     "S3StorageProvider",
+    "ResultStorage",
+    "SQLiteResultStorage",
+    "PostgreSQLResultStorage",
 ]
