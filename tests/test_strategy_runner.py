@@ -164,7 +164,7 @@ class TestStrategyInitialization:
         mock_strategy.min_history_window = 10
         mock_strategy.initialize_with_history = Mock()
 
-        # 샘플 캔들 데이터
+        # 샘플 캔들 데이터 (Task 3.5: 유효한 날짜 범위 1-10)
         sample_candles = [
             {
                 'timestamp': datetime(2024, 1, i),
@@ -174,7 +174,7 @@ class TestStrategyInitialization:
                 'close': 100.5 + i,
                 'volume': 1000.0 * i,
             }
-            for i in range(10)
+            for i in range(1, 11)
         ]
 
         mock_db.fetch_all_async.return_value = sample_candles
@@ -319,9 +319,10 @@ class TestCandleProcessing:
         config.is_initialized = True
         runner.strategies['KRW-BTC:volume_zone_breakout'] = config
 
-        # 캔들 데이터 생성
+        # 캔들 데이터 생성 (Task 3.5: timeframe 필드 추가)
         candle = CandleData(
             symbol='KRW-BTC',
+            timeframe='1d',
             timestamp=datetime.now(),
             open=100.0,
             high=101.0,
@@ -344,17 +345,21 @@ class TestCandleProcessing:
         runner.is_running = True
         runner.on_signal = AsyncMock()
 
-        # Mock 전략들 설정
+        # Mock 전략들 설정 (Task 3.5: Signal Mock에 price 속성 추가)
         mock_strategy1 = Mock()
         mock_signal1 = Mock(spec=Signal)
         mock_signal1.timestamp = datetime.now()
         mock_signal1.side = 'BUY'
+        mock_signal1.price = 100.0
+        mock_signal1.confidence = 0.9
         mock_strategy1.process_candle.return_value = mock_signal1
 
         mock_strategy2 = Mock()
         mock_signal2 = Mock(spec=Signal)
         mock_signal2.timestamp = datetime.now()
         mock_signal2.side = 'SELL'
+        mock_signal2.price = 101.0
+        mock_signal2.confidence = 0.85
         mock_strategy2.process_candle.return_value = mock_signal2
 
         config1 = StrategyConfig('KRW-BTC', 'strategy1', {})
@@ -369,6 +374,7 @@ class TestCandleProcessing:
 
         candle = CandleData(
             symbol='KRW-BTC',
+            timeframe='1d',
             timestamp=datetime.now(),
             open=100.0,
             high=101.0,
@@ -401,6 +407,7 @@ class TestCandleProcessing:
 
         candle = CandleData(
             symbol='KRW-BTC',
+            timeframe='1d',
             timestamp=datetime.now(),
             open=100.0,
             high=101.0,
@@ -429,6 +436,7 @@ class TestCandleProcessing:
 
         candle = CandleData(
             symbol='KRW-BTC',
+            timeframe='1d',
             timestamp=datetime.now(),
             open=100.0,
             high=101.0,
@@ -456,9 +464,10 @@ class TestCandleProcessing:
         config.is_initialized = True
         runner.strategies['KRW-BTC:volume_zone_breakout'] = config
 
-        # KRW-ETH 캔들 처리
+        # KRW-ETH 캔들 처리 (Task 3.5: timeframe 필드 추가)
         candle = CandleData(
             symbol='KRW-ETH',  # 다른 심볼
+            timeframe='1d',
             timestamp=datetime.now(),
             open=100.0,
             high=101.0,
@@ -528,6 +537,8 @@ class TestSignalGeneration:
         signal = Mock(spec=Signal)
         signal.timestamp = datetime.now()
         signal.side = 'BUY'
+        signal.price = 100.0  # Task 3.5: price 속성 추가
+        signal.confidence = 0.9  # confidence도 필요할 수 있음
 
         # 콜백 없어도 에러 없음
         await runner._on_signal_generated(signal, 'KRW-BTC', 'volume_zone_breakout')
