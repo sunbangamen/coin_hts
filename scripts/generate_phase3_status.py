@@ -177,6 +177,89 @@ Phase 3: 4/8 Tasks 완료 (50%)
         print(f"✅ PHASE3_IMPLEMENTATION_STATUS.md 업데이트 완료")
         return True
 
+    def update_auxiliary_documents(self) -> bool:
+        """보조 문서 AUTO 블록 업데이트"""
+        all_success = True
+
+        for doc_name, doc_path in self.docs.items():
+            if doc_name == 'source':
+                continue
+
+            if not doc_path.exists():
+                print(f"⚠️  {doc_name} 문서를 찾을 수 없습니다: {doc_path}")
+                continue
+
+            try:
+                with open(doc_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # 문서별 AUTO 블록 업데이트
+                if doc_name == 'summary':
+                    content = self._update_completion_summary_block(content)
+                elif doc_name == 'issue':
+                    content = self._update_issue_29_metrics_block(content)
+
+                with open(doc_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                print(f"✅ {doc_name} 업데이트 완료")
+            except Exception as e:
+                print(f"❌ {doc_name} 업데이트 실패: {e}")
+                all_success = False
+
+        return all_success
+
+    def _update_completion_summary_block(self, content: str) -> str:
+        """PHASE3_COMPLETION_SUMMARY.md의 AUTO 블록 업데이트"""
+        block = f"""### 전체 통과율
+```
+{self.status['pass_rate_str']} 테스트 통과
+```
+
+### 모듈별 상태
+
+| 모듈 | 상태 | 세부사항 |
+|------|------|--------|
+| **포지션 관리** | ✅ 20/20 | Task 3.3 완료 |
+| **S3 스토리지** | ✅ 10/10 | Task 3.4 완료 |
+| **비동기 API** | ✅ 19/19 | Task 3.2 완료 |
+| **InMemoryRedis** | ✅ 13/13 | 호환성 테스트 |
+| **기타 모듈** | ✅ {self.status['passed']-62}/{self.status['total_tests']-62} | 기존 기능 유지 |
+| **회귀 테스트** | ⚠️ {self.status['failed']}실패 | Task 3.5+ 진행 |
+
+### 실패 테스트 ({self.status['failed']}개)
+
+| 파일 | 테스트 수 | 원인 | 예정 Task |
+|------|---------|------|---------|
+| `test_result_manager.py` | 4 | PostgreSQL + Parquet 마이그레이션 필요 | Task 3.5 |
+| `test_strategy_runner.py` | 7 | 픽스처 및 에러 핸들링 보강 필요 | Task 3.5 |"""
+
+        pattern = r'<!-- AUTO-BEGIN: COMPLETION_SUMMARY_STATISTICS -->.*?<!-- AUTO-END: COMPLETION_SUMMARY_STATISTICS -->'
+        content = re.sub(
+            pattern,
+            f'<!-- AUTO-BEGIN: COMPLETION_SUMMARY_STATISTICS -->\n{block}\n<!-- AUTO-END: COMPLETION_SUMMARY_STATISTICS -->',
+            content,
+            flags=re.DOTALL
+        )
+        return content
+
+    def _update_issue_29_metrics_block(self, content: str) -> str:
+        """docs/coin/mvp/ri_18.md의 AUTO 블록 업데이트"""
+        block = f"""### 핵심 메타데이터
+- **마감 기한**: 4주 (Week 1-4)
+- **현재 pytest 상태**: {self.status['pass_rate_str']}
+- **기반 작업**: Phase 0-2 완료, Issue #27 완료
+- **알려진 이슈**: 6건 (High 3건, Medium 2건, Low 1건)"""
+
+        pattern = r'<!-- AUTO-BEGIN: ISSUE_29_METRICS -->.*?<!-- AUTO-END: ISSUE_29_METRICS -->'
+        content = re.sub(
+            pattern,
+            f'<!-- AUTO-BEGIN: ISSUE_29_METRICS -->\n{block}\n<!-- AUTO-END: ISSUE_29_METRICS -->',
+            content,
+            flags=re.DOTALL
+        )
+        return content
+
     def check_auxiliary_documents(self):
         """보조 문서에서 AUTO 블록 확인"""
         for doc_name, doc_path in self.docs.items():
@@ -190,19 +273,28 @@ Phase 3: 4/8 Tasks 완료 (50%)
             with open(doc_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
-            # AUTO 블록 확인
-            has_test_block = 'AUTO-BEGIN: TEST_STATISTICS' in content
-            has_task_block = 'AUTO-BEGIN: TASK_STATUS' in content
+            # 문서별 AUTO 블록 확인
+            auto_blocks = self._get_auto_blocks_for_doc(doc_name)
+            has_auto_blocks = all(block in content for block in auto_blocks)
             has_sot_reference = 'PHASE3_IMPLEMENTATION_STATUS' in content
 
-            status = "✅" if (has_test_block or has_sot_reference) else "⚠️"
+            status = "✅" if (has_auto_blocks or has_sot_reference) else "⚠️"
             print(f"{status} {doc_name}: ", end="")
-            if has_test_block and has_task_block:
-                print("AUTO 블록 완전")
+            if has_auto_blocks:
+                print(f"AUTO 블록 있음 ({len(auto_blocks)}개)")
             elif has_sot_reference:
                 print("SOT 참조 (AUTO 블록 없음)")
             else:
                 print("참조 없음 (데이터 불일치 위험)")
+
+    def _get_auto_blocks_for_doc(self, doc_name: str) -> List[str]:
+        """문서별 필요한 AUTO 블록 목록 반환"""
+        blocks = {
+            'source': ['AUTO-BEGIN: TEST_STATISTICS', 'AUTO-BEGIN: TASK_STATUS'],
+            'summary': ['AUTO-BEGIN: COMPLETION_SUMMARY_STATISTICS'],
+            'issue': ['AUTO-BEGIN: ISSUE_29_METRICS'],
+        }
+        return blocks.get(doc_name, [])
 
     def print_summary(self):
         """상태 요약 출력"""
@@ -235,8 +327,12 @@ Phase 3: 4/8 Tasks 완료 (50%)
             # 4. 문서 업데이트
             if update_docs:
                 print("\n🔄 문서 업데이트 중...")
-                self.update_source_of_truth()
-                print(f"✅ 모든 문서가 업데이트되었습니다.")
+                sot_ok = self.update_source_of_truth()
+                aux_ok = self.update_auxiliary_documents()
+                if sot_ok and aux_ok:
+                    print(f"✅ 모든 문서가 업데이트되었습니다.")
+                else:
+                    print(f"⚠️  일부 문서 업데이트가 실패했습니다.")
             else:
                 print("\n💡 팁: --update-docs 플래그를 사용하여 문서를 자동으로 업데이트하세요.")
 

@@ -60,9 +60,10 @@ python scripts/generate_phase3_status.py --input /tmp/test_results_*.json --upda
 
 ## 2. 현재 테스트 상태
 
+<!-- AUTO-BEGIN: COMPLETION_SUMMARY_STATISTICS -->
 ### 전체 통과율
 ```
-202/213 테스트 통과 (94.8%)
+192/203 (94.6%) 테스트 통과
 ```
 
 ### 모듈별 상태
@@ -73,7 +74,7 @@ python scripts/generate_phase3_status.py --input /tmp/test_results_*.json --upda
 | **S3 스토리지** | ✅ 10/10 | Task 3.4 완료 |
 | **비동기 API** | ✅ 19/19 | Task 3.2 완료 |
 | **InMemoryRedis** | ✅ 13/13 | 호환성 테스트 |
-| **기타 모듈** | ✅ 140+ | 기존 기능 유지 |
+| **기타 모듈** | ✅ 130/141 | 기존 기능 유지 |
 | **회귀 테스트** | ⚠️ 11실패 | Task 3.5+ 진행 |
 
 ### 실패 테스트 (11개)
@@ -82,6 +83,7 @@ python scripts/generate_phase3_status.py --input /tmp/test_results_*.json --upda
 |------|---------|------|---------|
 | `test_result_manager.py` | 4 | PostgreSQL + Parquet 마이그레이션 필요 | Task 3.5 |
 | `test_strategy_runner.py` | 7 | 픽스처 및 에러 핸들링 보강 필요 | Task 3.5 |
+<!-- AUTO-END: COMPLETION_SUMMARY_STATISTICS -->
 
 ---
 

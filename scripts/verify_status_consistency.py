@@ -27,9 +27,16 @@ class DocumentConsistencyVerifier:
             'issue': self.project_root / 'docs' / 'coin' / 'mvp' / 'ri_18.md',
             'test_results': self.project_root / 'TEST_RESULTS_SUMMARY.md',
         }
+        # 문서별 필수 AUTO 블록
+        self.required_auto_blocks = {
+            'source': ['AUTO-BEGIN: TEST_STATISTICS', 'AUTO-BEGIN: TASK_STATUS'],
+            'summary': ['AUTO-BEGIN: COMPLETION_SUMMARY_STATISTICS'],
+            'issue': ['AUTO-BEGIN: ISSUE_29_METRICS'],
+        }
         self.errors = []
         self.warnings = []
         self.source_metrics = {}
+        self._missing_docs = []
 
     def parse_test_metrics(self, content: str) -> Optional[Dict[str, int]]:
         """문서에서 테스트 수치 파싱"""
@@ -151,28 +158,46 @@ class DocumentConsistencyVerifier:
         return all_consistent
 
     def verify_auto_blocks(self) -> bool:
-        """AUTO 블록 존재 검증"""
-        print("\n🔲 AUTO 블록 검증")
+        """AUTO 블록 존재 및 내용 검증"""
+        print("\n🔲 AUTO 블록 검증 (모든 문서)")
         print("-" * 60)
 
-        source_file = self.docs['source']
-        with open(source_file, 'r', encoding='utf-8') as f:
-            source_content = f.read()
-
-        auto_blocks = [
-            'AUTO-BEGIN: TEST_STATISTICS',
-            'AUTO-BEGIN: TASK_STATUS',
-        ]
-
         all_present = True
-        for block in auto_blocks:
-            found = block in source_content
-            status = "✅" if found else "❌"
-            print(f"{status} {block}")
-            if not found:
+
+        for doc_name, doc_path in self.docs.items():
+            if doc_name == 'test_results':
+                continue
+
+            if not doc_path.exists():
+                status = "❌"
+                print(f"{status} {doc_name}: 파일을 찾을 수 없습니다")
+                self._missing_docs.append(doc_name)
                 all_present = False
                 if self.strict:
-                    self.errors.append(f"필수 AUTO 블록을 찾을 수 없습니다: {block}")
+                    self.errors.append(f"문서를 찾을 수 없습니다: {doc_path}")
+                continue
+
+            with open(doc_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            required_blocks = self.required_auto_blocks.get(doc_name, [])
+            if not required_blocks:
+                continue
+
+            # 각 문서의 필수 AUTO 블록 확인
+            doc_blocks_present = True
+            for block in required_blocks:
+                if block not in content:
+                    doc_blocks_present = False
+                    all_present = False
+                    if self.strict:
+                        self.errors.append(f"{doc_name}에서 필수 AUTO 블록을 찾을 수 없습니다: {block}")
+                    else:
+                        self.warnings.append(f"{doc_name}에서 필수 AUTO 블록을 찾을 수 없습니다: {block}")
+
+            status = "✅" if doc_blocks_present else "❌"
+            blocks_desc = f"({len(required_blocks)}개)" if required_blocks else ""
+            print(f"{status} {doc_name}: {blocks_desc}")
 
         return all_present
 
