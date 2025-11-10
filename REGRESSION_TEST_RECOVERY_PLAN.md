@@ -382,25 +382,226 @@ git add -A && git commit -m "fix: 회귀 테스트 11건 복구 (Task 3.5)"
 
 ---
 
-## 🚀 다음 단계
+## 🔧 **실제 구현 순서 (권장)**
 
-### Immediate (지금 진행)
-- [ ] test_result_manager.py의 4개 실패 케이스 분석 및 수정
-- [ ] test_strategy_runner.py의 7개 실패 케이스 분석 및 수정
-- [ ] 로컬 pytest 실행으로 통과 검증
+### **1단계: ResultStorage 구현 착수** 📋
+```bash
+# 1-1. 추상 인터페이스 및 구현체 뼈대 작성
+# 파일: backend/app/storage/result_storage.py (신규)
 
-### Short-term (Task 3.5 완료 후)
-- [ ] 203/203 테스트 100% 통과 확인
-- [ ] 문서 자동 갱신 (192 → 203)
-- [ ] git commit 및 git push
+# 1-2. tests/conftest.py에 테스트 픽스처 추가
+# SQLite 기반 임시 저장소 제공
 
-### Long-term (Phase 3 완료)
-- [ ] Task 3.6-3.8 수행
-- [ ] Phase 3 최종 리포트 작성
-- [ ] CI/CD 파이프라인 통합
+# 예상 시간: 1-2시간
+# 결과: ResultStorage 인터페이스 + PostgreSQL/SQLite 뼈대 완성
+```
+
+#### 세부 작업
+```python
+# backend/app/storage/result_storage.py
+
+from abc import ABC, abstractmethod
+
+class ResultStorage(ABC):
+    """결과 저장 추상 인터페이스"""
+
+    @abstractmethod
+    async def save_result(self, task_id: str, data: dict) -> bool:
+        pass
+
+    @abstractmethod
+    async def get_result(self, task_id: str) -> dict:
+        pass
+
+    @abstractmethod
+    async def cleanup_old_results(self, days: int = 7, dry_run: bool = False) -> int:
+        pass
+
+class PostgreSQLResultStorage(ResultStorage):
+    """PostgreSQL + Parquet 저장소 (향후 구현)"""
+    pass
+
+class SQLiteResultStorage(ResultStorage):
+    """테스트용 SQLite 저장소"""
+    pass
+```
+
+#### tests/conftest.py 픽스처
+```python
+@pytest.fixture
+def temp_result_storage(tmp_path):
+    """테스트용 임시 결과 저장소"""
+    db_path = tmp_path / "results.db"
+    return SQLiteResultStorage(db_path=str(db_path))
+
+@pytest.fixture
+def result_manager(temp_result_storage):
+    """의존성 주입된 ResultManager"""
+    return ResultManager(storage=temp_result_storage)
+```
+
+**체크리스트**:
+- [ ] backend/app/storage/result_storage.py 작성 완료
+- [ ] tests/conftest.py 픽스처 추가 완료
+- [ ] 임포트 확인 (파일 구조 정상)
 
 ---
 
-**상태**: 📋 계획 수립 완료
+### **2단계: ResultManager 리팩터링** ⚙️
+```bash
+# 2-1. 생성자에 의존성 주입 추가
+# 기존: ResultManager()
+# 변경: ResultManager(storage: ResultStorage)
+
+# 2-2. 매니페스트 저장/정리 메서드 스토리지 레이어로 변경
+# save_manifest_file() → storage.save_result() 호출
+# cleanup_old_results() → storage.cleanup_old_results() 호출
+
+# 예상 시간: 30분~1시간
+# 결과: test_result_manager.py 4건 통과 준비 완료
+```
+
+#### 수정 대상
+```python
+# backend/app/result_manager.py
+
+class ResultManager:
+    def __init__(self, storage: ResultStorage = None):
+        self.storage = storage or PostgreSQLResultStorage()
+
+    async def save_manifest_file(self, task_id: str, data: dict) -> bool:
+        # 기존: JSON 파일 직접 저장
+        # 변경: self.storage.save_result(task_id, data) 호출
+        return await self.storage.save_result(task_id, data)
+
+    async def cleanup_old_results(self, days: int = 7) -> int:
+        # 기존: 파일 시스템 직접 접근
+        # 변경: self.storage.cleanup_old_results(days) 호출
+        return await self.storage.cleanup_old_results(days)
+```
+
+**체크리스트**:
+- [ ] ResultManager.__init__() 의존성 주입 추가
+- [ ] save_manifest_file() 스토리지 레이어 호출로 변경
+- [ ] cleanup_old_results() 스토리지 레이어 호출로 변경
+- [ ] pytest tests/test_result_manager.py -v 실행 → 4건 통과 확인
+
+---
+
+### **3단계: StrategyRunner 개선** 🔄
+```bash
+# 3-1. StrategyRunner 생성자에 의존성 주입 추가
+# result_manager, position_manager 주입 가능하게
+
+# 3-2. 테스트 데이터 CandleData에 timeframe 필드 추가
+
+# 예상 시간: 1-2시간
+# 결과: test_strategy_runner.py 7건 통과 준비 완료
+```
+
+#### 수정 대상
+```python
+# backend/app/simulation/strategy_runner.py
+
+class StrategyRunner:
+    def __init__(self,
+                 result_manager: ResultManager = None,
+                 position_manager: PositionManager = None):
+        self.result_manager = result_manager or ResultManager()
+        self.position_manager = position_manager or PositionManager()
+```
+
+#### 테스트 데이터 수정
+```python
+# tests/test_strategy_runner.py
+
+@pytest.fixture
+def candle_data():
+    return CandleData(
+        symbol="KRW-BTC",
+        timeframe="1h",  # ✅ 추가 필수
+        timestamp=datetime(2024, 1, 1),
+        open=50000, high=51000, low=49000,
+        close=50500, volume=1000
+    )
+
+def test_initialize_strategy_with_history():
+    candles = [
+        CandleData(
+            symbol="KRW-BTC",
+            timeframe="1h",
+            timestamp=datetime(2024, 1, i),  # ✅ 유효한 범위 1-28일
+            ...
+        )
+        for i in range(1, 29)
+    ]
+```
+
+**체크리스트**:
+- [ ] StrategyRunner.__init__() 의존성 주입 추가
+- [ ] CandleData 테스트 데이터 timeframe 추가
+- [ ] 날짜 데이터 유효성 확인 (2024-01-01~28)
+- [ ] pytest tests/test_strategy_runner.py -v 실행 → 7건 통과 확인
+
+---
+
+### **4단계: 통합 검증 루틴** ✅
+```bash
+# 4-1. 모든 테스트 통과 확인
+./scripts/run_pytest.sh
+# 예상: 203/203 (100%)
+
+# 4-2. 문서 자동 동기화
+python scripts/generate_phase3_status.py \
+  --input /tmp/test_results_latest.json \
+  --update-docs
+
+# 4-3. Strict 검증
+python scripts/verify_status_consistency.py --strict
+
+# 4-4. git diff 확인 및 커밋
+git diff
+git add -A && git commit -m "fix: 회귀 테스트 11건 복구 (Task 3.5)"
+
+# 예상 시간: 30분~1시간
+# 결과: 203/203 테스트 100% 통과 + 커밋 완료
+```
+
+**체크리스트**:
+- [ ] ./scripts/run_pytest.sh 실행 → 203/203 통과
+- [ ] python scripts/generate_phase3_status.py --update-docs 완료
+- [ ] python scripts/verify_status_consistency.py --strict 통과
+- [ ] git diff 확인 (TEST_STATISTICS 192 → 203 변경)
+- [ ] git commit 완료
+
+---
+
+## 🚀 다음 단계
+
+### 즉시 (지금)
+- [ ] **1단계 착수**: ResultStorage 구현 시작
+  - [ ] backend/app/storage/result_storage.py 작성
+  - [ ] tests/conftest.py 픽스처 추가
+  - [ ] 로컬 임포트 테스트
+
+### Short-term (1-2일)
+- [ ] **2단계**: ResultManager 리팩터링
+  - [ ] 의존성 주입 추가
+  - [ ] test_result_manager.py 4건 통과 확인
+
+### Mid-term (2-3일)
+- [ ] **3단계**: StrategyRunner 개선
+  - [ ] 의존성 주입 추가
+  - [ ] test_strategy_runner.py 7건 통과 확인
+
+### Final (1일)
+- [ ] **4단계**: 통합 검증
+  - [ ] ./scripts/run_pytest.sh → 203/203
+  - [ ] 문서 동기화 및 커밋
+
+---
+
+**상태**: 🚀 **실제 구현 시작 준비 완료**
 **마지막 업데이트**: 2025-11-10
 **담당자**: Claude Code (AI Assistant)
+**다음 리뷰**: 1단계 완료 후 (예상 2025-11-11)

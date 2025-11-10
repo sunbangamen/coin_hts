@@ -416,18 +416,49 @@ python scripts/verify_status_consistency.py --strict
 
 세부 내용은 [REGRESSION_TEST_RECOVERY_PLAN.md](./REGRESSION_TEST_RECOVERY_PLAN.md) 참조
 
-### 1단계: 로컬 개발 중 (Task 3.5 진행)
+### 1단계: 단계별 구현 (Task 3.5 진행)
 
+#### 1-1. ResultStorage 구현 (1-2시간)
 ```bash
-# 회귀 테스트만 집중 실행 (빠른 피드백)
+# 1. backend/app/storage/result_storage.py 작성
+#    - 추상 인터페이스 + PostgreSQL/SQLite 뼈대
+
+# 2. tests/conftest.py에 픽스처 추가
+#    - temp_result_storage (SQLite 기반)
+#    - result_manager (의존성 주입)
+
+# 3. 로컬 임포트 테스트
+python -c "from backend.app.storage.result_storage import ResultStorage; print('OK')"
+```
+
+#### 1-2. ResultManager 리팩터링 (30분~1시간)
+```bash
+# 1. backend/app/result_manager.py 수정
+#    - __init__(storage: ResultStorage) 추가
+#    - 메서드들을 storage 레이어로 리팩터링
+
+# 2. 회귀 테스트 집중 실행
 pytest tests/test_result_manager.py -v
+# 예상: 4건 모두 통과 ✅
+```
+
+#### 1-3. StrategyRunner 개선 (1-2시간)
+```bash
+# 1. backend/app/simulation/strategy_runner.py 수정
+#    - __init__()에 result_manager, position_manager 주입
+
+# 2. tests/test_strategy_runner.py 수정
+#    - CandleData에 timeframe 필드 추가
+#    - 테스트 데이터 유효성 확인
+
 pytest tests/test_strategy_runner.py -v
+# 예상: 7건 모두 통과 ✅
+```
 
-# 부분 통과 시 문서 갱신 (선택)
+#### 1-4. 회귀 테스트 확인 (선택)
+```bash
+# 부분 통과 시 (선택사항)
 # python scripts/generate_phase3_status.py --input /tmp/test_results_latest.json --update-docs
-
-# 모든 실패 케이스 수정 후에만 전체 실행
-pytest tests/ -q
 ```
 
 ### 2단계: 전체 통과 확인 (203/203)

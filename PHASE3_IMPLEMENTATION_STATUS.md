@@ -304,24 +304,75 @@ VolumeZoneBreakout 전략 성능:
    - test_initialize_strategy_with_history: 유효한 날짜 데이터
    - test_on_signal_generated_no_callback: PositionManager 콜백 검증
 
+#### 실제 구현 순서 (4단계)
+
+**1단계: ResultStorage 구현** (1-2시간 예상)
+```bash
+# backend/app/storage/result_storage.py 작성
+# - ResultStorage 추상 인터페이스
+# - PostgreSQLResultStorage 뼈대
+# - SQLiteResultStorage (테스트용)
+
+# tests/conftest.py 추가
+# - temp_result_storage 픽스처
+# - result_manager 픽스처 (의존성 주입)
+```
+
+**2단계: ResultManager 리팩터링** (30분~1시간 예상)
+```bash
+# backend/app/result_manager.py 수정
+# - __init__()에 storage: ResultStorage 추가
+# - save_manifest_file() → storage.save_result() 호출
+# - cleanup_old_results() → storage.cleanup_old_results() 호출
+
+pytest tests/test_result_manager.py -v  # → 4건 통과
+```
+
+**3단계: StrategyRunner 개선** (1-2시간 예상)
+```bash
+# backend/app/simulation/strategy_runner.py 수정
+# - __init__()에 result_manager, position_manager 주입
+#
+# tests/test_strategy_runner.py 수정
+# - CandleData에 timeframe 필드 추가
+# - 테스트 데이터 유효성 확인 (2024-01-01~28)
+
+pytest tests/test_strategy_runner.py -v  # → 7건 통과
+```
+
+**4단계: 통합 검증** (30분~1시간 예상)
+```bash
+./scripts/run_pytest.sh  # → 203/203 (100%)
+
+python scripts/generate_phase3_status.py \
+  --input /tmp/test_results_latest.json \
+  --update-docs
+
+python scripts/verify_status_consistency.py --strict
+
+git add -A && git commit -m "fix: 회귀 테스트 11건 복구 (Task 3.5)"
+```
+
 #### 검증 절차
 ```bash
-# 1. 회귀 테스트 집중 (Task 3.5 진행 중)
+# 로컬 개발 중 (각 단계별)
 pytest tests/test_result_manager.py -v
 pytest tests/test_strategy_runner.py -v
 
-# 2. 전체 통과 확인
+# 전체 통과 확인 (Task 3.5 완료 후)
 ./scripts/run_pytest.sh  # → 203/203 목표
 
-# 3. 문서 자동 갱신
+# 문서 자동 갱신 및 검증
 python scripts/generate_phase3_status.py --input /tmp/test_results_latest.json --update-docs
-
-# 4. Strict 검증
 python scripts/verify_status_consistency.py --strict
+
+# 최종 커밋
+git diff  # 확인
+git add -A && git commit
 ```
 
 #### 참고 문서
-- [REGRESSION_TEST_RECOVERY_PLAN.md](./REGRESSION_TEST_RECOVERY_PLAN.md) - 세부 분석 및 수정 방안
+- [REGRESSION_TEST_RECOVERY_PLAN.md](./REGRESSION_TEST_RECOVERY_PLAN.md) - 세부 분석, 구체적 코드 예제, 체크리스트
 
 ### Task 3.6: 운영 가이드 (예상 2일)
 ```
