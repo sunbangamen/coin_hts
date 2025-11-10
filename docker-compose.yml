@@ -229,3 +229,29 @@ volumes:
     driver: local
   redis-data:
     driver: local
+
+  # 외부 스토리지 사용 예시 (주석 처리)
+  #
+  # OneDrive 마운트 (WSL2):
+  # onedrive-data:
+  #   driver: local
+  #   driver_opts:
+  #     type: none
+  #     o: bind
+  #     device: /mnt/onedrive/data
+  #
+  # NAS 마운트 (NFS):
+  # nas-data:
+  #   driver: local
+  #   driver_opts:
+  #     type: nfs
+  #     o: addr=192.168.1.100,vers=4,soft,timeo=180,bg,tcp
+  #     device: ":/exported/path"
+  #
+  # SMB 마운트 (Samba/Windows):
+  # smb-data:
+  #   driver: local
+  #   driver_opts:
+  #     type: cifs
+  #     o: username=user,password=pass,vers=3.0
+  #     device: "//192.168.1.100/share"
