@@ -17,6 +17,7 @@ class TaskStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class TaskManager:
@@ -206,6 +207,33 @@ class TaskManager:
 
         error_data = json.loads(error_json)
         return error_data.get("error")
+
+    @classmethod
+    def cancel_task(cls, task_id: str, reason: str = "Task cancelled by user") -> None:
+        """
+        작업 취소 (Phase 3 추가)
+
+        Args:
+            task_id: 작업 ID
+            reason: 취소 사유 (선택사항)
+        """
+        task_key = f"{cls.TASK_KEY_PREFIX}{task_id}"
+        redis_conn.hset(task_key, "status", TaskStatus.CANCELLED.value)
+        redis_conn.expire(task_key, cls.TASK_TIMEOUT)
+
+        # 취소 사유를 에러 메시지로 선택적 저장
+        if reason:
+            error_key = f"{cls.TASK_ERROR_PREFIX}{task_id}"
+            error_data = {
+                "task_id": task_id,
+                "error": reason,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            error_json = json.dumps(error_data)
+            redis_conn.set(error_key, error_json)
+            redis_conn.expire(error_key, cls.TASK_TIMEOUT)
+
+        logger.info(f"Task {task_id} cancelled: {reason}")
 
     @classmethod
     def get_status(cls, task_id: str) -> Optional[Dict[str, Any]]:

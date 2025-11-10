@@ -39,6 +39,9 @@ class Position:
         self.unrealized_pnl = 0.0
         self.unrealized_pnl_pct = 0.0
 
+        # 초기 손익 계산 (현재가 = 진입가이므로 손익 = -수수료)
+        self.update_price(entry_price)
+
     def update_price(self, current_price: float) -> None:
         """현재 가격으로 미실현 손익 업데이트"""
         self.current_price = current_price

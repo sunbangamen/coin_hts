@@ -28,6 +28,7 @@ from backend.app.simulation.simulation_orchestrator import get_orchestrator, clo
 from backend.app.simulation.position_manager import get_position_manager
 from backend.app.market_data.market_data_service import get_market_data_service
 from backend.app.routers import data as data_router
+from backend.app.routers import monitoring as monitoring_router
 from backend.app.scheduler import (
     start_scheduler,
     stop_scheduler,
@@ -54,6 +55,7 @@ app.add_middleware(
 
 # 라우터 등록
 app.include_router(data_router.router)
+app.include_router(monitoring_router.router)
 
 # 환경변수
 DATA_ROOT = os.getenv("DATA_ROOT", "/data")
@@ -263,7 +265,7 @@ class AsyncBacktestResponse(BaseModel):
     """비동기 백테스트 응답 모델"""
 
     task_id: str = Field(..., description="작업 ID (UUID)")
-    status: str = Field(..., description="작업 상태 (queued, running, completed, failed)")
+    status: str = Field(..., description="작업 상태 (queued, running, completed, failed, cancelled)")
     created_at: str = Field(..., description="작업 생성 시간 (ISO 8601)")
 
 
@@ -271,10 +273,10 @@ class TaskStatusResponse(BaseModel):
     """작업 상태 조회 응답 모델"""
 
     task_id: str = Field(..., description="작업 ID")
-    status: str = Field(..., description="작업 상태 (queued, running, completed, failed)")
+    status: str = Field(..., description="작업 상태 (queued, running, completed, failed, cancelled)")
     progress: float = Field(..., description="진행률 (0.0 ~ 1.0)")
     result: Optional[Dict[str, Any]] = Field(default=None, description="백테스트 결과 (완료 시)")
-    error: Optional[str] = Field(default=None, description="에러 메시지 (실패 시)")
+    error: Optional[str] = Field(default=None, description="에러 메시지 (실패 또는 취소 시)")
 
 
 # ============================================================================
@@ -1015,27 +1017,29 @@ async def run_backtest_async(request: BacktestRequest):
 
         logger.info(f"[{task_id}] Async backtest task created")
 
-        # RQ 큐에 작업 추가 (현재 run_backtest_job 미지원 - 향후 구현)
-        # try:
-        #     job = rq_queue.enqueue(
-        #         run_backtest_job,
-        #         task_id=task_id,
-        #         strategy=request.strategy,
-        #         params=request.params,
-        #         symbols=request.symbols,
-        #         start_date=request.start_date,
-        #         end_date=request.end_date,
-        #         timeframe=request.timeframe,
-        #         job_id=task_id,  # 작업 ID를 task_id로 설정
-        #     )
-        #     logger.info(f"[{task_id}] Job enqueued to RQ: {job.id}")
-        # except Exception as e:
-        #     logger.error(f"[{task_id}] Failed to enqueue job: {e}")
-        #     TaskManager.set_error(task_id, f"Failed to enqueue job: {str(e)}")
-        #     raise HTTPException(
-        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        #         detail=f"Failed to enqueue backtest job: {str(e)}",
-        #     )
+        # RQ 큐에 작업 추가 (Phase 3 구현 완료)
+        try:
+            from backend.app.jobs import run_backtest_job
+            job = rq_queue.enqueue(
+                run_backtest_job,
+                task_id=task_id,
+                strategy=request.strategy,
+                params=request.params,
+                symbols=request.symbols,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                timeframe=request.timeframe,
+                job_id=task_id,  # 작업 ID를 task_id로 설정
+                timeout=3600,  # 1시간 타임아웃
+            )
+            logger.info(f"[{task_id}] Job enqueued to RQ: {job.id}")
+        except Exception as e:
+            logger.error(f"[{task_id}] Failed to enqueue job: {e}")
+            TaskManager.set_error(task_id, f"Failed to enqueue job: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to enqueue backtest job: {str(e)}",
+            )
 
         # 응답
         task = TaskManager.get_task(task_id)
@@ -1052,6 +1056,83 @@ async def run_backtest_async(request: BacktestRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error: {str(e)}",
+        )
+
+
+@app.delete(
+    "/api/backtests/tasks/{task_id}",
+    response_model=AsyncBacktestResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def cancel_backtest_task(task_id: str):
+    """
+    진행 중인 백테스트 작업 취소 (Phase 3 비동기 큐 구현)
+
+    제출되었거나 실행 중인 백테스트 작업을 취소합니다.
+    이미 완료되거나 실패한 작업은 취소할 수 없습니다.
+
+    Args:
+        task_id (str): 작업 ID (UUID)
+
+    Returns:
+        AsyncBacktestResponse: 취소된 작업 정보
+            - task_id: 작업 ID
+            - status: cancelled
+            - created_at: 작업 생성 시간
+
+    Raises:
+        HTTPException: 작업을 찾을 수 없거나 이미 완료됨
+    """
+    try:
+        # 작업 정보 조회
+        task_status = TaskManager.get_status(task_id)
+
+        if not task_status:
+            logger.warning(f"Task not found for cancellation: {task_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task not found: {task_id}",
+            )
+
+        current_status = task_status.get("status")
+
+        # 이미 완료되거나 실패한 작업은 취소 불가
+        if current_status in [TaskStatus.COMPLETED.value, TaskStatus.FAILED.value]:
+            logger.warning(f"Cannot cancel {current_status} task: {task_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot cancel {current_status} task. Only queued or running tasks can be cancelled.",
+            )
+
+        # RQ 큐에서 작업 취소 시도
+        try:
+            job = rq_queue.fetch_job(task_id)
+            if job:
+                job.cancel()
+                logger.info(f"[{task_id}] RQ job cancelled")
+        except Exception as e:
+            logger.warning(f"[{task_id}] Failed to cancel RQ job: {e}")
+            # job이 없거나 이미 시작된 경우도 있으므로 계속 진행
+
+        # TaskManager에서 작업 상태를 cancelled로 업데이트
+        TaskManager.cancel_task(task_id, "Task cancelled by user")
+
+        logger.info(f"[{task_id}] Async backtest task cancelled")
+
+        # 취소 확인 응답
+        return AsyncBacktestResponse(
+            task_id=task_id,
+            status="cancelled",
+            created_at=task_status.get("created_at", datetime.utcnow().isoformat() + "Z"),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[{task_id}] Error cancelling task: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error cancelling task: {str(e)}",
         )
 
 

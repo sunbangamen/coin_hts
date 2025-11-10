@@ -1,77 +1,77 @@
 {
-  "test_timestamp": "2025-11-03T17:19:38.034175",
+  "test_timestamp": "2025-11-08T16:14:25.281686",
   "test_results": [
     {
       "strategy": "VolumeLongCandle",
       "success": true,
       "error": null,
-      "execution_time_sec": 0.0112,
-      "memory_used_mb": 0.86,
-      "memory_peak_mb": 0.08,
+      "execution_time_sec": 0.0111,
+      "memory_used_mb": 1.03,
+      "memory_peak_mb": 0.07,
       "num_signals": 15,
       "num_candles": 100,
-      "signals_per_second": 1339.75,
-      "timestamp": "2025-11-03T17:19:30.961754"
+      "signals_per_second": 1352.8,
+      "timestamp": "2025-11-08T16:14:24.891010"
     },
     {
       "strategy": "VolumeZoneBreakout",
       "success": true,
       "error": null,
-      "execution_time_sec": 0.4359,
-      "memory_used_mb": 0.0,
-      "memory_peak_mb": 0.11,
-      "num_signals": 45,
+      "execution_time_sec": 0.0228,
+      "memory_used_mb": 0.17,
+      "memory_peak_mb": 0.07,
+      "num_signals": 66,
       "num_candles": 100,
-      "signals_per_second": 103.22,
-      "timestamp": "2025-11-03T17:19:31.397998"
+      "signals_per_second": 2897.23,
+      "timestamp": "2025-11-08T16:14:24.914042"
     },
     {
       "strategy": "VolumeLongCandle",
       "success": true,
       "error": null,
-      "execution_time_sec": 0.009,
+      "execution_time_sec": 0.0084,
       "memory_used_mb": 0.0,
       "memory_peak_mb": 0.07,
       "num_signals": 15,
       "num_candles": 300,
-      "signals_per_second": 1663.17,
-      "timestamp": "2025-11-03T17:19:31.408542"
+      "signals_per_second": 1780.52,
+      "timestamp": "2025-11-08T16:14:24.924076"
     },
     {
       "strategy": "VolumeZoneBreakout",
       "success": true,
       "error": null,
-      "execution_time_sec": 1.4414,
+      "execution_time_sec": 0.0708,
       "memory_used_mb": 0.0,
-      "memory_peak_mb": 0.15,
-      "num_signals": 117,
+      "memory_peak_mb": 0.17,
+      "num_signals": 221,
       "num_candles": 300,
-      "signals_per_second": 81.17,
-      "timestamp": "2025-11-03T17:19:32.850317"
+      "signals_per_second": 3123.09,
+      "timestamp": "2025-11-08T16:14:24.995166"
     },
     {
       "strategy": "VolumeLongCandle",
       "success": true,
       "error": null,
-      "execution_time_sec": 0.0101,
+      "execution_time_sec": 0.0088,
       "memory_used_mb": 0.0,
       "memory_peak_mb": 0.13,
       "num_signals": 16,
       "num_candles": 1000,
-      "signals_per_second": 1585.19,
-      "timestamp": "2025-11-03T17:19:32.863724"
+      "signals_per_second": 1816.99,
+      "timestamp": "2025-11-08T16:14:25.007585"
     },
     {
       "strategy": "VolumeZoneBreakout",
       "success": true,
       "error": null,
-      "execution_time_sec": 5.1652,
-      "memory_used_mb": 0.0,
-      "memory_peak_mb": 0.36,
-      "num_signals": 412,
+      "execution_time_sec": 0.2688,
+      "memory_used_mb": 0.52,
+      "memory_peak_mb": 0.45,
+      "num_signals": 885,
       "num_candles": 1000,
-      "signals_per_second": 79.77,
-      "timestamp": "2025-11-03T17:19:38.029342"
+      "signals_per_second": 3292.61,
+      "timestamp": "2025-11-08T16:14:25.276974"
     }
   ],
   "equity_curve_analysis": [

@@ -93,8 +93,8 @@ class TestResultManager:
         assert saved_data["version"] == "1.1.0"
         assert saved_data["total_signals"] == 25
 
-    def test_save_manifest_file(self, temp_data_root):
-        """manifest.json 저장 테스트"""
+    def test_save_manifest_file(self, result_manager):
+        """manifest.json 저장 테스트 (Task 3.5: 인스턴스 메서드)"""
         task_id = "manifest-test-id"
         started_at = "2025-11-04T10:00:00Z"
         finished_at = "2025-11-04T10:05:30Z"
@@ -108,8 +108,8 @@ class TestResultManager:
             }
         ]
 
-        manifest_file = ResultManager.save_manifest_file(
-            data_root=temp_data_root,
+        manifest_file = result_manager.save_manifest_file(
+            data_root=result_manager.data_root,
             task_id=task_id,
             strategy="volume_zone_breakout",
             params={"volume_window": 10},
@@ -137,18 +137,18 @@ class TestResultManager:
         assert manifest["task_id"] == task_id
         assert manifest["status"] == "completed"
         assert manifest["strategy"] == "volume_zone_breakout"
-        assert manifest["total_signals"] == 25
+        assert manifest["summary"]["total_signals"] == 25
         assert manifest["summary"]["symbols_processed"] == 2
         assert manifest["summary"]["symbols_failed"] == 0
         assert manifest["error"]["occurred"] is False
 
-    def test_save_manifest_file_with_error(self, temp_data_root):
-        """에러 정보가 포함된 manifest.json 저장 테스트"""
+    def test_save_manifest_file_with_error(self, result_manager):
+        """에러 정보가 포함된 manifest.json 저장 테스트 (Task 3.5: 인스턴스 메서드)"""
         task_id = "error-manifest-test"
         error_message = "Backtest failed: data loader error"
 
-        manifest_file = ResultManager.save_manifest_file(
-            data_root=temp_data_root,
+        manifest_file = result_manager.save_manifest_file(
+            data_root=result_manager.data_root,
             task_id=task_id,
             strategy="volume_zone_breakout",
             params={},
@@ -199,14 +199,14 @@ class TestResultManager:
 
         assert result_file is None
 
-    def test_cleanup_old_results_dry_run(self, temp_data_root):
-        """정리 스크립트 dry-run 모드 테스트"""
+    def test_cleanup_old_results_dry_run(self, result_manager):
+        """정리 스크립트 dry-run 모드 테스트 (Task 3.5: 인스턴스 메서드)"""
         # 오래된 작업 생성 (TTL 7일보다 오래됨)
         old_task_id = "old-task-id"
         old_finished_at = (datetime.utcnow() - timedelta(days=8)).isoformat() + "Z"
 
-        manifest_file = ResultManager.save_manifest_file(
-            data_root=temp_data_root,
+        manifest_file = result_manager.save_manifest_file(
+            data_root=result_manager.data_root,
             task_id=old_task_id,
             strategy="volume_zone_breakout",
             params={},
@@ -223,8 +223,8 @@ class TestResultManager:
         )
 
         # Dry-run으로 정리
-        result = ResultManager.cleanup_old_results(
-            data_root=temp_data_root,
+        result = result_manager.cleanup_old_results(
+            data_root=result_manager.data_root,
             ttl_days=7,
             dry_run=True,
         )
@@ -236,13 +236,13 @@ class TestResultManager:
         # 파일이 실제로 삭제되지 않았는지 확인
         assert os.path.exists(manifest_file)
 
-    def test_cleanup_old_results_actual(self, temp_data_root):
-        """정리 스크립트 실제 삭제 테스트"""
+    def test_cleanup_old_results_actual(self, result_manager):
+        """정리 스크립트 실제 삭제 테스트 (Task 3.5: 인스턴스 메서드)"""
         # 오래된 작업 생성
         old_task_id = "old-task-actual"
         old_finished_at = (datetime.utcnow() - timedelta(days=8)).isoformat() + "Z"
 
-        task_dir = ResultManager.create_task_directory(temp_data_root, old_task_id)
+        task_dir = ResultManager.create_task_directory(result_manager.data_root, old_task_id)
         manifest_file = os.path.join(task_dir, "manifest.json")
 
         manifest_data = {
@@ -258,8 +258,8 @@ class TestResultManager:
             json.dump(manifest_data, f)
 
         # 실제 정리 실행
-        result = ResultManager.cleanup_old_results(
-            data_root=temp_data_root,
+        result = result_manager.cleanup_old_results(
+            data_root=result_manager.data_root,
             ttl_days=7,
             dry_run=False,
         )
@@ -272,14 +272,14 @@ class TestResultManager:
         assert not os.path.exists(manifest_file)
         assert not os.path.exists(task_dir)
 
-    def test_cleanup_skips_recent_results(self, temp_data_root):
-        """정리가 최근 결과를 건너뛰는지 테스트"""
+    def test_cleanup_skips_recent_results(self, result_manager):
+        """정리가 최근 결과를 건너뛰는지 테스트 (Task 3.5: 인스턴스 메서드)"""
         # 최근 작업 생성 (TTL 이내)
         recent_task_id = "recent-task-id"
         recent_finished_at = (datetime.utcnow() - timedelta(days=2)).isoformat() + "Z"
 
-        manifest_file = ResultManager.save_manifest_file(
-            data_root=temp_data_root,
+        manifest_file = result_manager.save_manifest_file(
+            data_root=result_manager.data_root,
             task_id=recent_task_id,
             strategy="volume_zone_breakout",
             params={},
@@ -296,8 +296,8 @@ class TestResultManager:
         )
 
         # 정리 실행
-        result = ResultManager.cleanup_old_results(
-            data_root=temp_data_root,
+        result = result_manager.cleanup_old_results(
+            data_root=result_manager.data_root,
             ttl_days=7,
             dry_run=False,
         )
