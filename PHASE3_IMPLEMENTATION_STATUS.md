@@ -270,21 +270,58 @@ VolumeZoneBreakout 전략 성능:
 
 ## 📋 다음 단계 (예정)
 
-### Task 3.5: 결과 저장 개선 (예상 3-4일)
+### ⏳ Task 3.5: 결과 저장 파이프라인 개편 + 회귀 테스트 복구 (진행 중)
+
+**상태**: 진행 중 (회귀 테스트 분석 완료)
+**목표**: 203/203 테스트 100% 통과 (현재: 192/203, 94.6%)
+**예상 완료**: 2025-11-17
+
+#### 회귀 테스트 현황
+| 파일 | 실패 건수 | 원인 | 우선순위 |
+|------|---------|------|--------|
+| test_result_manager.py | 4 | ResultManager 저장소 레이어 재구조화 필요 | HIGH |
+| test_strategy_runner.py | 7 | CandleData 스키마 변경 + Dependency Injection 필요 | HIGH |
+
+#### 구현 계획
+1. **결과 저장 레이어 개편**
+   - ResultStorage 추상 인터페이스 설계
+   - PostgreSQL + Parquet 저장소 구현
+   - 테스트용 SQLite 저장소 (빠른 초기화)
+
+2. **테스트 픽스처 개선**
+   - tests/conftest.py 의존성 주입 개선
+   - 임시 디렉토리 구조 자동 생성
+   - InMemory stub 제공
+
+3. **test_result_manager.py 수정 (4건)**
+   - test_save_manifest_file: 디렉토리 자동 생성
+   - test_cleanup_old_results_dry_run: cleanup 로직 개선
+   - 저장소 레이어를 통한 통합 검증
+
+4. **test_strategy_runner.py 수정 (7건)**
+   - CandleData: timeframe 필드 추가 대응
+   - StrategyRunner: Dependency Injection 도입
+   - test_initialize_strategy_with_history: 유효한 날짜 데이터
+   - test_on_signal_generated_no_callback: PositionManager 콜백 검증
+
+#### 검증 절차
+```bash
+# 1. 회귀 테스트 집중 (Task 3.5 진행 중)
+pytest tests/test_result_manager.py -v
+pytest tests/test_strategy_runner.py -v
+
+# 2. 전체 통과 확인
+./scripts/run_pytest.sh  # → 203/203 목표
+
+# 3. 문서 자동 갱신
+python scripts/generate_phase3_status.py --input /tmp/test_results_latest.json --update-docs
+
+# 4. Strict 검증
+python scripts/verify_status_consistency.py --strict
 ```
-1. PostgreSQL 스키마 설계
-   - JSON → Parquet 호환 필드
-2. Alembic 마이그레이션 스크립트
-   - 기존 데이터 마이그레이션
-   - 롤백 가능한 설계
-3. Parquet 저장소 통합
-   - pyarrow 기반 압축
-   - 크기: JSON 대비 98% 감소
-4. 테스트
-   - 마이그레이션 성공/롤백
-   - 데이터 무결성
-   - 성능 검증
-```
+
+#### 참고 문서
+- [REGRESSION_TEST_RECOVERY_PLAN.md](./REGRESSION_TEST_RECOVERY_PLAN.md) - 세부 분석 및 수정 방안
 
 ### Task 3.6: 운영 가이드 (예상 2일)
 ```

@@ -407,6 +407,113 @@ python scripts/verify_status_consistency.py --strict
 
 ---
 
+## 🔧 회귀 테스트 복구 절차 (Task 3.5)
+
+### 개요
+현재 203/203 테스트 중 192 통과, 11 실패 (94.6%)
+- test_result_manager.py: 4건 실패
+- test_strategy_runner.py: 7건 실패
+
+세부 내용은 [REGRESSION_TEST_RECOVERY_PLAN.md](./REGRESSION_TEST_RECOVERY_PLAN.md) 참조
+
+### 1단계: 로컬 개발 중 (Task 3.5 진행)
+
+```bash
+# 회귀 테스트만 집중 실행 (빠른 피드백)
+pytest tests/test_result_manager.py -v
+pytest tests/test_strategy_runner.py -v
+
+# 부분 통과 시 문서 갱신 (선택)
+# python scripts/generate_phase3_status.py --input /tmp/test_results_latest.json --update-docs
+
+# 모든 실패 케이스 수정 후에만 전체 실행
+pytest tests/ -q
+```
+
+### 2단계: 전체 통과 확인 (203/203)
+
+```bash
+# 1. 전체 pytest 실행
+./scripts/run_pytest.sh
+
+# 2. 결과 확인
+#   ✅ 192 → 203 통과 (100%)
+#   ✅ 11개 실패 → 0개 해결
+```
+
+### 3단계: 문서 자동 동기화
+
+```bash
+# 1. 테스트 결과 자동 갱신
+python scripts/generate_phase3_status.py \
+  --input /tmp/test_results_latest.json \
+  --update-docs
+
+# 2. Strict 검증
+python scripts/verify_status_consistency.py --strict
+
+# 3. git diff 확인
+git diff PHASE3_IMPLEMENTATION_STATUS.md
+git diff PHASE3_COMPLETION_SUMMARY.md
+```
+
+### 4단계: 커밋
+
+```bash
+# git diff로 변경사항 최종 확인
+git diff
+
+# 커밋 (203/203 통과 확인 후)
+git add -A && git commit -m "fix: 회귀 테스트 11건 복구 (Task 3.5)"
+
+# 또는 상세 커밋 메시지
+git commit -m "$(cat <<'EOF'
+fix: Phase 3 회귀 테스트 11건 복구 완료
+
+## 해결된 이슈
+
+### test_result_manager.py (4건)
+- test_save_manifest_file: 디렉토리 자동 생성
+- test_save_manifest_file_with_error: 저장소 레이어 개선
+- test_cleanup_old_results_dry_run: cleanup 로직 수정
+- test_cleanup_skips_recent_results: 리센트 결과 보존 확인
+
+### test_strategy_runner.py (7건)
+- test_initialize_strategy_with_history: 유효한 날짜 데이터
+- test_process_candle_*: CandleData timeframe 필드 추가
+- test_on_signal_generated_no_callback: PositionManager 콜백 검증
+
+## 개선 사항
+
+- ResultStorage 추상 인터페이스 도입
+- Dependency Injection으로 테스트성 향상
+- SQLite 기반 테스트 저장소 추가
+- conftest.py 픽스처 개선
+
+## 검증
+
+- 203/203 테스트 100% 통과
+- Strict 모드 검증 통과
+- 문서 자동 동기화 완료
+
+🤖 Generated with Claude Code
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+EOF
+)"
+```
+
+### 예상 결과
+
+```
+✅ 회귀 테스트 11건 모두 통과
+✅ 문서 메트릭 자동 갱신 (192 → 203)
+✅ Strict 검증 통과
+✅ git log에 기록
+```
+
+---
+
 ## 📞 문제해결
 
 ### Q: JSON 파일을 찾을 수 없음
@@ -446,12 +553,14 @@ grep -i "test" PHASE3_IMPLEMENTATION_STATUS.md | head -5
 
 ## 📚 관련 문서
 
-- [PHASE3_IMPLEMENTATION_STATUS.md](./PHASE3_IMPLEMENTATION_STATUS.md) - 소스 오브 트루스
+- [PHASE3_IMPLEMENTATION_STATUS.md](./PHASE3_IMPLEMENTATION_STATUS.md) - 소스 오브 트루스 (SOT)
 - [PHASE3_COMPLETION_SUMMARY.md](./PHASE3_COMPLETION_SUMMARY.md) - 운영 가이드
-- [docs/coin/mvp/ri_18.md](./docs/coin/mvp/ri_18.md) - 사용자 문서
+- [docs/coin/mvp/ri_18.md](./docs/coin/mvp/ri_18.md) - 사용자 문서 (이슈 #29)
+- [REGRESSION_TEST_RECOVERY_PLAN.md](./REGRESSION_TEST_RECOVERY_PLAN.md) - Task 3.5 회귀 테스트 복구 계획
 
 ---
 
 **마지막 업데이트**: 2025-11-10
 **검증 상태**: ✅ 모든 스크립트 및 AUTO 블록 작동 확인
-**다음 단계**: CI/CD 파이프라인에 통합
+**현재 진행**: 📋 Task 3.5 회귀 테스트 복구 계획 수립 (192/203 → 203/203 목표)
+**다음 단계**: Task 3.5 구현 및 회귀 테스트 복구
