@@ -1,6 +1,16 @@
 # Phase 3 운영 보완 - 구현 완료 요약
 
+**📌 문서 유형**: 보조 지침 (Auxiliary Reference)
+이 문서는 PHASE3_IMPLEMENTATION_STATUS.md의 내용을 운영 관점에서 정리한 보조 문서입니다.
+정확한 상태·테스트 통과율·Task 진행 현황은 **반드시 PHASE3_IMPLEMENTATION_STATUS.md를 참조**하세요.
+
+**🔄 자동 동기화**: 이 문서의 상태 및 수치는 다음 스크립트에 의해 자동으로 업데이트됩니다.
+```bash
+python scripts/generate_phase3_status.py --input /tmp/test_results_*.json --update-docs
+```
+
 **작성 일시**: 2025-11-10
+**마지막 자동 업데이트**: [CI/CD에서 관리]
 **상태**: 진행 중 (Tasks 3.3-3.4 완료, 3.5-3.8 진행)
 
 ---
