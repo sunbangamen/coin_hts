@@ -13,23 +13,38 @@ logger = logging.getLogger(__name__)
 
 class ResultManager:
     """
-    백테스트 결과 파일 관리 (Task 3.5: 의존성 주입 지원)
+    백테스트 결과 파일 관리 (Task 3.5: 의존성 주입 + Dual-write 지원)
 
     생성자에서 storage: ResultStorage를 받아 저장소 계층에 위임합니다.
-    storage가 None인 경우 기존 파일 기반 동작을 유지합니다.
+
+    저장소 모드 (RESULT_STORAGE_MODE 환경변수):
+    - 'json-only': JSON 파일만 사용 (기본값)
+    - 'dual-write': PostgreSQL + Parquet과 JSON 파일 모두 저장 (마이그레이션 중)
+    - 'postgres-only': PostgreSQL + Parquet만 사용 (전환 완료)
     """
 
-    def __init__(self, storage=None, data_root: Optional[str] = None):
+    # Storage mode constants
+    MODE_JSON_ONLY = 'json-only'
+    MODE_DUAL_WRITE = 'dual-write'
+    MODE_POSTGRES_ONLY = 'postgres-only'
+
+    def __init__(self, storage=None, data_root: Optional[str] = None, storage_mode: Optional[str] = None):
         """
-        ResultManager 초기화 (의존성 주입 + PostgreSQL 기본값)
+        ResultManager 초기화 (의존성 주입 + Dual-write 지원)
 
         Args:
             storage: ResultStorage 인스턴스 (선택사항)
-                     None인 경우 PostgreSQL 스토리지 시도 후 파일 기반으로 폴백
+                     None인 경우 RESULT_STORAGE_MODE 환경변수 확인 후 초기화
             data_root: 데이터 루트 디렉토리 (선택사항)
+            storage_mode: 저장소 모드 ('json-only', 'dual-write', 'postgres-only')
+                         None인 경우 RESULT_STORAGE_MODE 환경변수 사용
         """
-        # storage가 None인 경우 PostgreSQL 기본값 시도 (향후 구현)
-        if storage is None:
+        # 저장소 모드 결정
+        self.storage_mode = storage_mode or os.getenv("RESULT_STORAGE_MODE", self.MODE_JSON_ONLY)
+        logger.info(f"ResultManager storage mode: {self.storage_mode}")
+
+        # storage가 None인 경우 모드에 따라 초기화
+        if storage is None and self.storage_mode != self.MODE_JSON_ONLY:
             try:
                 from backend.app.storage.result_storage import PostgreSQLResultStorage
                 db_url = os.getenv("DATABASE_URL")
@@ -37,9 +52,11 @@ class ResultManager:
                     storage = PostgreSQLResultStorage(db_url)
                     logger.info("PostgreSQL storage initialized from DATABASE_URL")
                 else:
-                    logger.info("DATABASE_URL not set, falling back to file-based mode")
+                    logger.warning("DATABASE_URL not set, falling back to json-only mode")
+                    self.storage_mode = self.MODE_JSON_ONLY
             except Exception as e:
-                logger.warning(f"PostgreSQL storage initialization failed: {e}, using file-based mode")
+                logger.warning(f"PostgreSQL storage initialization failed: {e}, using json-only mode")
+                self.storage_mode = self.MODE_JSON_ONLY
 
         self.storage = storage
         self.data_root = data_root
@@ -144,9 +161,10 @@ class ResultManager:
         symbols_failed: int,
         status: str = "completed",
         error_message: Optional[str] = None,
+        backtest_result: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
-        manifest.json 파일 저장 (Task 3.5: 저장소 계층 위임)
+        manifest.json 파일 저장 (Task 3.5: 저장소 계층 위임 + Dual-write 지원)
 
         Args:
             data_root: 데이터 루트 디렉토리
@@ -165,6 +183,7 @@ class ResultManager:
             symbols_failed: 실패한 심볼 수
             status: 작업 상태 (completed, failed)
             error_message: 에러 메시지 (status=failed 시)
+            backtest_result: 전체 백테스트 결과 데이터 (dual-write 시 PostgreSQL+Parquet에 저장)
 
         Returns:
             저장된 manifest 파일 경로
@@ -219,16 +238,89 @@ class ResultManager:
 
         logger.info(f"Manifest file saved: {manifest_file}")
 
-        # 저장소 계층에 메타데이터 저장 (storage 있을 경우)
-        if self.storage:
+        # 저장소 계층에 데이터 저장 (dual-write/postgres-only 모드)
+        if self.storage and self.storage_mode in [self.MODE_DUAL_WRITE, self.MODE_POSTGRES_ONLY]:
             import asyncio
             try:
-                asyncio.run(self.storage.save_result(task_id, manifest_data))
-                logger.info(f"Manifest saved to storage layer: task_id={task_id}")
+                # 저장할 데이터 선택: backtest_result 있으면 사용, 없으면 manifest_data 사용
+                storage_data = backtest_result if backtest_result else manifest_data
+
+                # 데이터 검증: Parquet 변환기가 요구하는 필드 확인
+                self._validate_backtest_result(storage_data, symbols, strategy)
+
+                asyncio.run(self.storage.save_result(task_id, storage_data))
+                logger.info(f"Result saved to storage layer ({self.storage_mode}): task_id={task_id}")
+            except ValueError as e:
+                # 데이터 검증 실패 - 포맷 불일치
+                logger.error(f"Data validation failed: {e}")
+                if self.storage_mode == self.MODE_POSTGRES_ONLY:
+                    raise
+                else:
+                    logger.warning(f"Skipping storage layer save due to validation error, JSON backup maintained")
             except Exception as e:
-                logger.warning(f"Failed to save manifest to storage layer: {e}")
+                logger.error(f"Failed to save result to storage layer: {e}", exc_info=True)
+                if self.storage_mode == self.MODE_POSTGRES_ONLY:
+                    # In postgres-only mode, storage failure is critical
+                    raise
+                else:
+                    # In dual-write mode, log warning but continue (JSON backup still exists)
+                    logger.warning(f"Continuing with file-based backup (JSON still saved)")
 
         return manifest_file
+
+    @staticmethod
+    def _validate_backtest_result(
+        storage_data: Dict[str, Any],
+        symbols: List[str],
+        strategy: str,
+    ) -> None:
+        """
+        Parquet 변환기 호환성을 위한 데이터 검증
+
+        Args:
+            storage_data: 저장할 데이터
+            symbols: 심볼 목록
+            strategy: 전략명
+
+        Raises:
+            ValueError: 필수 필드가 누락되었거나 형식이 올바르지 않을 때
+        """
+        if not isinstance(storage_data, dict):
+            raise ValueError("storage_data must be a dictionary")
+
+        # Parquet 변환기가 요구하는 핵심 필드 확인
+        # 필드가 없으면 manifest_data 형식으로 자동 보정
+        required_fields = {
+            'symbols': (list, "must be a list of dicts with 'symbol' key"),
+            'strategy': (str, "must be a string"),
+        }
+
+        for field, (expected_type, error_msg) in required_fields.items():
+            if field not in storage_data:
+                if field == 'symbols':
+                    storage_data['symbols'] = [
+                        {'symbol': s} if isinstance(s, str) else s for s in symbols
+                    ]
+                    logger.debug(f"Added '{field}' to storage_data from parameters")
+                elif field == 'strategy':
+                    storage_data['strategy'] = strategy
+                    logger.debug(f"Added '{field}' to storage_data from parameters")
+            else:
+                value = storage_data[field]
+                if not isinstance(value, expected_type):
+                    raise ValueError(
+                        f"Field '{field}' has incorrect type. {error_msg}. "
+                        f"Got {type(value).__name__}"
+                    )
+
+        # symbols이 리스트이고 각 요소의 형식 확인
+        symbols_list = storage_data.get('symbols', [])
+        if isinstance(symbols_list, list):
+            for sym in symbols_list:
+                if isinstance(sym, dict) and 'symbol' not in sym:
+                    raise ValueError(
+                        "Each symbol in 'symbols' list must have 'symbol' key"
+                    )
 
     @staticmethod
     def get_result_file(data_root: str, task_id: str, filename: str = "result.json") -> Optional[str]:
