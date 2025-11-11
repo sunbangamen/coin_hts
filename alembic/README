@@ -1,0 +1,76 @@
+# Alembic Migration Guide
+
+This directory contains database migration scripts for the Coin HTS project.
+
+## Quick Start
+
+### Initialize migrations
+```bash
+# The alembic/ directory is already initialized
+# To create a new migration:
+cd /path/to/project
+python -m alembic revision -m "Description of changes"
+```
+
+### Apply migrations
+```bash
+# Apply all pending migrations
+python -m alembic upgrade head
+
+# Apply migration to specific revision
+python -m alembic upgrade <revision_id>
+
+# Downgrade to previous revision
+python -m alembic downgrade -1
+
+# Downgrade to specific revision
+python -m alembic downgrade <revision_id>
+```
+
+### Check migration status
+```bash
+# Show current revision
+python -m alembic current
+
+# Show migration history
+python -m alembic history
+```
+
+## Migration Files
+
+Migration files are located in `versions/` directory. Each file contains:
+- `upgrade()`: Changes to apply when upgrading
+- `downgrade()`: Changes to revert when downgrading
+
+## Configuration
+
+- `alembic.ini`: Configuration file (includes database URL)
+- `env.py`: Alembic environment configuration
+- `script.py.mako`: Template for generating migration files
+
+## Important Notes
+
+1. **Database URL**: Use the `DATABASE_URL` environment variable
+   ```bash
+   export DATABASE_URL="postgresql://user:password@localhost:5432/coin_db"
+   ```
+
+2. **Manual DDL**: If autogenerate doesn't work properly, write DDL manually in the migration file
+
+3. **Testing**: Always test migrations before deploying to production
+   ```bash
+   # Test upgrade
+   python -m alembic upgrade head
+
+   # Test downgrade
+   python -m alembic downgrade -1
+   ```
+
+## Task 3.5 Migrations
+
+This migration system supports the PostgreSQL + Parquet migration for Task 3.5:
+- `backtest_results` table for metadata storage
+- Related indexes and triggers
+- Version tracking in metadata.json
+
+See `../docs/coin/mvp/RESULT_STORAGE_SCHEMA.md` for schema details.
