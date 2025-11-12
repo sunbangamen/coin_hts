@@ -184,9 +184,13 @@ class PerformancePoint(BaseModel):
 
 
 class SymbolResult(BaseModel):
-    """심볼별 백테스트 결과"""
+    """심볼별 백테스트 결과 (Phase 2 심볼 토글 지원)"""
 
     symbol: str
+    is_active: bool = Field(
+        default=True,
+        description="심볼 활성화 여부 (Phase 2에서 추가, 기본값: True)"
+    )
     signals: List[APISignal] = Field(
         default_factory=list,
         description="개별 거래 신호 목록 (Step 4 신호 테이블용)"
@@ -756,6 +760,17 @@ class BacktestHistoryResponse(BaseModel):
     items: List[BacktestHistoryItem] = Field(..., description="히스토리 항목 배열")
 
 
+class SymbolToggleRequest(BaseModel):
+    """심볼 활성/비활성 토글 요청 (Phase 2)"""
+    is_active: bool = Field(..., description="심볼 활성화 여부")
+
+
+class SymbolToggleResponse(BaseModel):
+    """심볼 활성/비활성 토글 응답 (Phase 2)"""
+    symbol: str = Field(..., description="심볼명")
+    is_active: bool = Field(..., description="활성화 여부")
+
+
 class StrategyPreset(BaseModel):
     """전략 프리셋 (Phase 3)"""
     name: str = Field(..., description="프리셋 이름", min_length=1, max_length=100)
@@ -879,6 +894,89 @@ async def get_backtest_history(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve backtest history: {str(e)}",
+        )
+
+
+@app.patch(
+    "/api/backtests/{run_id}/symbols/{symbol}",
+    response_model=SymbolToggleResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def toggle_symbol_active(
+    run_id: str,
+    symbol: str,
+    request: SymbolToggleRequest,
+):
+    """
+    특정 심볼의 활성 상태 토글 (Phase 2 심볼 토글 기능)
+
+    백테스트 결과의 특정 심볼의 활성/비활성 상태를 변경합니다.
+    PATCH 동시 호출 시에도 파일 lock으로 데이터 무결성을 보장합니다.
+
+    Args:
+        run_id (str): 백테스트 실행 ID
+        symbol (str): 심볼명 (예: BTC_KRW)
+        request (SymbolToggleRequest): 활성화 여부
+
+    Returns:
+        SymbolToggleResponse: 업데이트된 심볼 상태
+
+    Raises:
+        HTTPException:
+            - 404: run_id 또는 symbol 미존재
+            - 500: 파일 저장 실패
+    """
+    try:
+        logger.info(f"[{run_id}] Toggling symbol '{symbol}' to is_active={request.is_active}")
+
+        # 1. 결과 파일 로드
+        result_data = ResultManager.get_result(DATA_ROOT, run_id)
+        if not result_data:
+            logger.warning(f"[{run_id}] Backtest result not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Backtest result not found: {run_id}",
+            )
+
+        # 2. 심볼 찾기 및 업데이트
+        symbols = result_data.get("symbols", [])
+        symbol_found = False
+        for sym in symbols:
+            if sym.get("symbol") == symbol:
+                sym["is_active"] = request.is_active
+                symbol_found = True
+                logger.debug(f"[{run_id}] Symbol '{symbol}' updated to is_active={request.is_active}")
+                break
+
+        if not symbol_found:
+            logger.warning(f"[{run_id}] Symbol '{symbol}' not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Symbol '{symbol}' not found in backtest result",
+            )
+
+        # 3. 결과 저장 (원자적 쓰기로 동시성 보장)
+        if not ResultManager.save_result(DATA_ROOT, run_id, result_data):
+            logger.error(f"[{run_id}] Failed to save result after toggling '{symbol}'")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save updated result",
+            )
+
+        logger.info(f"[{run_id}] Symbol '{symbol}' toggled successfully")
+
+        return SymbolToggleResponse(
+            symbol=symbol,
+            is_active=request.is_active,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[{run_id}] Unexpected error toggling symbol '{symbol}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}",
         )
 
 

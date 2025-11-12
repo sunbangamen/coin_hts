@@ -1,0 +1,94 @@
+{
+  "backend_files": 2,
+  "frontend_files": 5,
+  "test_files": 2,
+  "doc_files": 3,
+  "automation_files": 2,
+  "total_files": 14,
+  "total_lines": 7860,
+  "total_tests": 20,
+  "timestamp": "2025-11-11T18:41:54.713695",
+  "command": "python3 scripts/report_issue35_stats.py",
+  "backend_files_detail": [
+    {
+      "path": "backend/app/main.py",
+      "lines": 2064,
+      "status": "Modified"
+    },
+    {
+      "path": "backend/app/result_manager.py",
+      "lines": 766,
+      "status": "Modified"
+    }
+  ],
+  "frontend_files_detail": [
+    {
+      "path": "frontend/src/components/SymbolToggleList.jsx",
+      "lines": 149,
+      "status": "New"
+    },
+    {
+      "path": "frontend/src/styles/SymbolToggleList.css",
+      "lines": 335,
+      "status": "New"
+    },
+    {
+      "path": "frontend/src/pages/SignalViewerPage.jsx",
+      "lines": 517,
+      "status": "Modified"
+    },
+    {
+      "path": "frontend/src/App.css",
+      "lines": 1292,
+      "status": "Modified"
+    },
+    {
+      "path": "frontend/src/utils/charts.ts",
+      "lines": 319,
+      "status": "Modified"
+    }
+  ],
+  "test_files_detail": [
+    {
+      "path": "tests/unit/test_symbol_result.py",
+      "lines": 326,
+      "tests": 10,
+      "status": "New"
+    },
+    {
+      "path": "tests/integration/test_symbol_toggle_api.py",
+      "lines": 329,
+      "tests": 10,
+      "status": "New"
+    }
+  ],
+  "doc_files_detail": [
+    {
+      "path": "docs/coin/mvp/SYMBOL_TOGGLE_API.md",
+      "lines": 250,
+      "status": "New"
+    },
+    {
+      "path": "docs/coin/mvp/SIGNAL_VIEWER_USER_GUIDE.md",
+      "lines": 329,
+      "status": "New"
+    },
+    {
+      "path": "docs/coin/mvp/PHASE2_ISSUE_35_COMPLETION.md",
+      "lines": 658,
+      "status": "New"
+    }
+  ],
+  "automation_files_detail": [
+    {
+      "path": "scripts/report_issue35_stats.py",
+      "lines": 361,
+      "status": "New"
+    },
+    {
+      "path": "scripts/render_issue35_summary.py",
+      "lines": 165,
+      "status": "New"
+    }
+  ]
+}
