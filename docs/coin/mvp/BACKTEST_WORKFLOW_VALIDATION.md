@@ -165,6 +165,33 @@ data/
 └── ...
 ```
 
+#### 3-3. 실행 결과 예시
+
+**실제 실행 결과 (2025-11-12)**:
+
+```
+Job ID: 6004ad9c-5057-427f-bf3d-245550a624f3
+요청:
+  - 심볼: KRW-BTC
+  - 타임프레임: 1M
+  - 기간: 최근 3일
+  - 상태: HTTP 200
+
+응답:
+{
+  "success": true,
+  "job_id": "6004ad9c-5057-427f-bf3d-245550a624f3",
+  "message": "배치 작업이 큐에 추가되었습니다"
+}
+
+결과:
+  ✅ 작업 큐에 추가됨
+  ✅ 워커가 약 25초 내에 처리 완료
+  ✅ 자동 수집 대상(7개 심볼) 모두 처리됨
+```
+
+**아티팩트 위치**: `artifacts/ri_22/step3_manual_ingest_20251112.log`
+
 ---
 
 ### Step 4: 파일 구조 및 데이터 검증
@@ -212,6 +239,45 @@ EOF
 - [ ] 필수 컬럼 존재: open, high, low, close, volume, timestamp
 - [ ] timestamp 컬럼이 datetime 타입
 - [ ] 데이터가 올바르게 저장됨 (행 수 > 0)
+
+#### 4-3. 실행 결과 예시
+
+**실제 실행 결과 (2025-11-12)**:
+
+```
+파일: /data/KRW-BTC/1M/2025.parquet
+행 수: 1762
+컬럼: ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+
+데이터 타입:
+  timestamp    datetime64[ns, UTC]
+  open                     float64
+  high                     float64
+  low                      float64
+  close                    float64
+  volume                   float64
+
+첫 3행:
+                  timestamp         open        high         low       close    volume
+0 2025-11-11 00:01:00+00:00  156969000.0  157150000.0  156827000.0  156860000.0  0.651881
+1 2025-11-11 00:02:00+00:00  156939000.0  157020000.0  156850000.0  156973000.0  0.386865
+2 2025-11-11 00:03:00+00:00  156974000.0  157052000.0  156906000.0  156954000.0  0.399434
+
+마지막 3행:
+                     timestamp         open        high         low       close    volume
+1759 2025-11-12 05:20:00+00:00  154638000.0  154657000.0  154600000.0  154635000.0  0.310581
+1760 2025-11-12 05:21:00+00:00  154635000.0  154693000.0  154600000.0  154607000.0  0.228530
+1761 2025-11-12 05:22:00+00:00  154639000.0  154700000.0  154600000.0  154607000.0  0.081426
+```
+
+**아티팩트 위치**: `artifacts/ri_22/step4_parquet_validation_20251112.json`
+
+✅ **검증 결과**:
+- 파일 경로 올바름: `data/KRW-BTC/1M/2025.parquet`
+- 행 수: 1,762행 (정상 데이터)
+- 모든 필수 컬럼 존재
+- 데이터 타입 정상
+- 시간 범위: 2025-11-11 00:01 ~ 2025-11-12 05:22 (약 29시간)
 
 ---
 
@@ -261,6 +327,76 @@ curl -X POST http://localhost:8000/api/backtests/run \
 - [ ] API 응답 200 OK
 - [ ] 백테스트 결과가 JSON으로 반환됨
 - [ ] 신호 및 성공률 데이터 포함됨
+
+#### 5-3. 실행 결과 예시
+
+**실제 실행 결과 (2025-11-12)**:
+
+```
+요청:
+  POST http://localhost:8000/api/backtests/run
+  {
+    "strategy": "volume_long_candle",
+    "symbols": ["KRW-BTC"],
+    "start_date": "2025-11-11",
+    "end_date": "2025-11-12",
+    "timeframe": "1M",
+    "params": {
+      "vol_ma_window": 20,
+      "vol_multiplier": 1.5,
+      "body_pct": 0.01
+    }
+  }
+
+응답 (HTTP 200):
+{
+  "version": "1.1.0",
+  "run_id": "b3cf36a4-dbb7-45d8-83c7-f4291098463c",
+  "strategy": "volume_long_candle",
+  "start_date": "2025-11-11",
+  "end_date": "2025-11-12",
+  "timeframe": "1M",
+  "symbols": ["KRW-BTC"],
+  "total_signals": 0,
+  "execution_time": 0.054,
+  "metadata": {
+    "execution_date": "2025-11-12T05:22:56.825142Z",
+    "environment": "development",
+    "execution_host": "f5c3fadcddf1"
+  }
+}
+```
+
+**아티팩트 위치**: `artifacts/ri_22/step5_backtest_response_20251112.json`
+
+✅ **검증 결과**:
+- HTTP 상태: 200 OK
+- Run ID 발급: `b3cf36a4-dbb7-45d8-83c7-f4291098463c`
+- timeframe 올바르게 처리: `1M` ✅
+- 수집된 데이터로 백테스트 정상 실행
+- 실행 시간: 0.054초
+
+---
+
+### 실행 결과 기록
+
+**최근 검증 실행**: 2025-11-12
+
+| 항목 | 결과 | 아티팩트 |
+|------|------|---------|
+| 전체 워크플로 로그 | ✅ 완료 | `artifacts/ri_22/workflow_validation_20251112.log` |
+| Step 3: 수동 수집 | ✅ 완료 (Job ID: 6004ad9c) | `artifacts/ri_22/step3_manual_ingest_20251112.log` |
+| Step 4: 파일 검증 | ✅ 완료 (1,762행) | `artifacts/ri_22/step4_parquet_validation_20251112.json` |
+| Step 5: 백테스트 | ✅ 완료 (Run ID: b3cf36a4) | `artifacts/ri_22/step5_backtest_response_20251112.json` |
+
+**자동 검증 스크립트**:
+```bash
+# 전체 워크플로 실행 및 로그 생성
+./scripts/run_backtest_workflow_validation.sh
+
+# 아티팩트 검증
+python3 scripts/verify_workflow_artifacts.py
+```
 
 ---
 

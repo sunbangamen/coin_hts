@@ -1,0 +1,96 @@
+{
+  "timestamp": "2025-11-12T14:21:30.000Z",
+  "step": "Step 4: 파일 구조 및 데이터 검증",
+  "file_path": "/data/KRW-BTC/1M/2025.parquet",
+  "validation_results": {
+    "file_exists": true,
+    "file_size_bytes": 67749,
+    "row_count": 1762,
+    "columns": [
+      "timestamp",
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume"
+    ],
+    "data_types": {
+      "timestamp": "datetime64[ns, UTC]",
+      "open": "float64",
+      "high": "float64",
+      "low": "float64",
+      "close": "float64",
+      "volume": "float64"
+    },
+    "timestamp_range": {
+      "first": "2025-11-11T00:01:00+00:00",
+      "last": "2025-11-12T05:22:00+00:00",
+      "duration_hours": 29.35
+    },
+    "sample_data": {
+      "first_3_rows": [
+        {
+          "timestamp": "2025-11-11 00:01:00+00:00",
+          "open": 156969000.0,
+          "high": 157150000.0,
+          "low": 156827000.0,
+          "close": 156860000.0,
+          "volume": 0.651881
+        },
+        {
+          "timestamp": "2025-11-11 00:02:00+00:00",
+          "open": 156939000.0,
+          "high": 157020000.0,
+          "low": 156850000.0,
+          "close": 156973000.0,
+          "volume": 0.386865
+        },
+        {
+          "timestamp": "2025-11-11 00:03:00+00:00",
+          "open": 156974000.0,
+          "high": 157052000.0,
+          "low": 156906000.0,
+          "close": 156954000.0,
+          "volume": 0.399434
+        }
+      ],
+      "last_3_rows": [
+        {
+          "timestamp": "2025-11-12 05:20:00+00:00",
+          "open": 154638000.0,
+          "high": 154657000.0,
+          "low": 154600000.0,
+          "close": 154635000.0,
+          "volume": 0.310581
+        },
+        {
+          "timestamp": "2025-11-12 05:21:00+00:00",
+          "open": 154635000.0,
+          "high": 154693000.0,
+          "low": 154600000.0,
+          "close": 154607000.0,
+          "volume": 0.228530
+        },
+        {
+          "timestamp": "2025-11-12 05:22:00+00:00",
+          "open": 154639000.0,
+          "high": 154700000.0,
+          "low": 154600000.0,
+          "close": 154607000.0,
+          "volume": 0.081426
+        }
+      ]
+    }
+  },
+  "verification_checklist": {
+    "required_columns_present": true,
+    "correct_data_types": true,
+    "timestamp_format_utc": true,
+    "numeric_values_valid": true,
+    "no_null_values": true,
+    "chronological_order": true,
+    "row_count_positive": true
+  },
+  "status": "✅ 모든 검증 통과",
+  "notes": "파일 저장 경로 data/{symbol}/{timeframe}/YYYY.parquet 형식 완벽히 준수"
+}
