@@ -30,7 +30,8 @@ const STRATEGY_PARAMS_CONFIG = {
   ]
 }
 
-const TIMEFRAMES = ['1d', '1h', '5m']
+// 타임프레임 목록 (DataManagementPage.jsx와 동기화)
+const TIMEFRAMES = ['1M', '5M', '1H', '1D', '1W']
 
 // Strategy Presets (from Phase 2 optimization analysis)
 // 출처: docs/coin/mvp/phase2_strategy_optimization.md
@@ -97,7 +98,7 @@ export default function BacktestPage() {
     symbols: '',
     start_date: '',
     end_date: '',
-    timeframe: '1d',
+    timeframe: '1H',
     params: {}
   })
 
