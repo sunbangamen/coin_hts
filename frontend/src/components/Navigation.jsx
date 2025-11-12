@@ -17,6 +17,12 @@ export default function Navigation() {
         <Link to="/data" className="nav-link">
           데이터 관리
         </Link>
+        <Link to="/markets" className="nav-link">
+          종목 리스트
+        </Link>
+        <Link to="/screener" className="nav-link">
+          조건 검색
+        </Link>
       </div>
     </nav>
   )
