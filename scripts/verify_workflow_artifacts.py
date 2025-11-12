@@ -50,9 +50,26 @@ def check_artifacts_directory():
     return True
 
 
-def find_latest_artifact(pattern):
-    """주어진 패턴과 일치하는 가장 최근 파일 찾기"""
-    matching_files = sorted(ARTIFACTS_DIR.glob(f"{pattern}_*.log") + ARTIFACTS_DIR.glob(f"{pattern}_*.json"))
+def find_latest_artifact(pattern, extension=None):
+    """주어진 패턴과 일치하는 가장 최근 파일 찾기
+
+    Args:
+        pattern: 파일명 패턴 (예: "workflow_validation")
+        extension: 파일 확장자 (예: ".log", ".json", None=모두)
+
+    Returns:
+        가장 최근 파일의 Path 객체 또는 None
+    """
+    if extension:
+        # 특정 확장자만 검색
+        matching_files = list(ARTIFACTS_DIR.glob(f"{pattern}_*{extension}"))
+    else:
+        # .log와 .json 모두 검색
+        log_files = list(ARTIFACTS_DIR.glob(f"{pattern}_*.log"))
+        json_files = list(ARTIFACTS_DIR.glob(f"{pattern}_*.json"))
+        matching_files = log_files + json_files
+
+    matching_files = sorted(matching_files)
     return matching_files[-1] if matching_files else None
 
 
@@ -93,7 +110,7 @@ def verify_main_log():
 
 def verify_step3_log():
     """step3_manual_ingest_*.log 검증"""
-    log_file = find_latest_artifact("step3_manual_ingest")
+    log_file = find_latest_artifact("step3_manual_ingest", extension=".log")
 
     if not log_file:
         log_warning("step3_manual_ingest_*.log 파일 없음 (선택사항)")
@@ -122,7 +139,7 @@ def verify_step3_log():
 
 def verify_step4_json():
     """step4_parquet_validation_*.json 검증"""
-    json_file = find_latest_artifact("step4_parquet_validation")
+    json_file = find_latest_artifact("step4_parquet_validation", extension=".json")
 
     if not json_file:
         log_warning("step4_parquet_validation_*.json 파일 없음 (선택사항)")
@@ -167,7 +184,7 @@ def verify_step4_json():
 
 def verify_step5_json():
     """step5_backtest_response_*.json 검증"""
-    json_file = find_latest_artifact("step5_backtest_response")
+    json_file = find_latest_artifact("step5_backtest_response", extension=".json")
 
     if not json_file:
         log_warning("step5_backtest_response_*.json 파일 없음 (선택사항)")
@@ -191,7 +208,17 @@ def verify_step5_json():
         'execution_time'
     ]
 
-    missing_fields = [field for field in required_fields if field not in data]
+    # 필드를 두 가지 경로에서 찾기: 최상위 또는 response 하위
+    def get_field_value(field_name):
+        """최상위 또는 response 하위에서 필드 값 찾기"""
+        # 최상위에서 먼저 확인
+        if field_name in data:
+            return data.get(field_name)
+        # response 하위에서 확인
+        response = data.get('response', {})
+        return response.get(field_name)
+
+    missing_fields = [field for field in required_fields if get_field_value(field) is None]
 
     if missing_fields:
         log_error(f"Step 5 JSON에 필수 필드 부재: {missing_fields}")
@@ -204,7 +231,9 @@ def verify_step5_json():
             log_error("Step 5: run_id 없음")
             return False
 
-    log_success(f"Step 5 JSON 검증 통과 (timeframe: {data.get('timeframe')})")
+    # timeframe 값 출력 (최상위 또는 response 하위 중 실제 값)
+    timeframe = get_field_value('timeframe')
+    log_success(f"Step 5 JSON 검증 통과 (timeframe: {timeframe})")
     return True
 
 
