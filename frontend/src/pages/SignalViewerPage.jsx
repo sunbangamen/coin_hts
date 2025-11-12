@@ -4,6 +4,7 @@ import { formatDateTime, formatNumber, formatPercent } from '../utils/formatters
 import SignalsTable from '../components/SignalsTable'
 import CompareResultsModal from '../components/CompareResultsModal'
 import AdvancedFilterPanel from '../components/AdvancedFilterPanel'
+import SymbolToggleList from '../components/SymbolToggleList'
 import {
   fetchLatestBacktest,
   fetchBacktestHistory,
@@ -13,9 +14,20 @@ import {
 import '../App.css'
 
 /**
- * LatestResultCard - 최신 백테스트 결과를 표시하는 컴포넌트
+ * LatestResultCard - 최신 백테스트 결과를 표시하는 컴포넌트 (Phase 2: 심볼 토글 지원)
  */
 function LatestResultCard({ data, loading, error }) {
+  const [symbols, setSymbols] = useState([])
+  const [toggleError, setToggleError] = useState(null)
+
+  // 데이터 변경 시 심볼 목록 업데이트
+  useEffect(() => {
+    if (data?.symbols) {
+      setSymbols(data.symbols)
+      setToggleError(null)
+    }
+  }, [data?.run_id]) // run_id 변경 시에만 업데이트
+
   if (loading) {
     return (
       <div className="card latest-result-card loading">
@@ -42,6 +54,24 @@ function LatestResultCard({ data, loading, error }) {
       </div>
     )
   }
+
+  const handleSymbolToggle = (updated) => {
+    // 심볼 목록 업데이트
+    setSymbols(prev =>
+      prev.map(s =>
+        s.symbol === updated.symbol
+          ? { ...s, is_active: updated.is_active }
+          : s
+      )
+    )
+  }
+
+  const handleToggleError = (errorMsg) => {
+    setToggleError(errorMsg)
+  }
+
+  // 활성 심볼만 필터링
+  const activeSymbols = symbols.filter(s => s.is_active)
 
   return (
     <div className="card latest-result-card">
@@ -73,12 +103,29 @@ function LatestResultCard({ data, loading, error }) {
         </div>
       </div>
 
-      {/* 심볼별 성과 */}
-      {data.symbols && data.symbols.length > 0 && (
+      {/* Phase 2: 심볼 활성화 관리 */}
+      {symbols.length > 0 && (
+        <SymbolToggleList
+          runId={data.run_id}
+          symbols={symbols}
+          onToggle={handleSymbolToggle}
+          onError={handleToggleError}
+        />
+      )}
+
+      {/* 심볼별 성과 (Phase 2: 활성 심볼만 표시) */}
+      {activeSymbols.length > 0 && (
         <div className="symbols-performance">
-          <h4>심볼별 성과</h4>
+          <h4>
+            심볼별 성과
+            {activeSymbols.length < symbols.length && (
+              <span className="performance-note">
+                ({activeSymbols.length}/{symbols.length} 활성)
+              </span>
+            )}
+          </h4>
           <div className="performance-grid">
-            {data.symbols.map(symbol => (
+            {activeSymbols.map(symbol => (
               <div key={symbol.symbol} className="performance-card">
                 <h5>{symbol.symbol}</h5>
                 <div className="metric">
@@ -104,6 +151,16 @@ function LatestResultCard({ data, loading, error }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* 비활성 심볼 알림 */}
+      {symbols.length > activeSymbols.length && (
+        <div className="inactive-symbols-notice">
+          <span className="notice-icon">ℹ️</span>
+          <span className="notice-text">
+            {symbols.length - activeSymbols.length}개의 비활성 심볼은 성과 분석에서 제외되었습니다.
+          </span>
         </div>
       )}
 

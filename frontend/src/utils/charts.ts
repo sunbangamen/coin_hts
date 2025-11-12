@@ -160,10 +160,11 @@ export const calculateReturnsDistribution = (
 };
 
 /**
- * Symbol Result 타입 정의
+ * Symbol Result 타입 정의 (Phase 2: is_active 필드 추가)
  */
 export interface SymbolResult {
   symbol: string;
+  is_active?: boolean; // Phase 2: 심볼 활성화 여부 (기본값: true)
   signals?: APISignal[];
   performance_curve?: PerformancePoint[];
   win_rate?: number;

@@ -429,7 +429,10 @@ class ResultManager:
         result_data: Dict[str, Any],
     ) -> bool:
         """
-        백테스트 결과 저장 및 인덱스 업데이트
+        백테스트 결과 저장 및 인덱스 업데이트 (Phase 2: 원자적 쓰기 지원)
+
+        PATCH API 동시 호출 시에도 데이터 무결성 보장을 위해 fcntl.flock으로 쓰기 잠금을 잡고
+        임시 파일에 쓴 후 os.replace()로 원자적으로 교체합니다.
 
         Args:
             data_root: 데이터 루트 디렉토리
@@ -439,17 +442,33 @@ class ResultManager:
         Returns:
             성공 여부
         """
-        # 1. 결과 파일 저장
+        # 1. 결과 파일 저장 (원자적 쓰기)
         results_dir = os.path.join(data_root, "results")
         os.makedirs(results_dir, exist_ok=True)
 
         result_file = os.path.join(results_dir, f"{run_id}.json")
+        temp_file = result_file + ".tmp"
+
         try:
-            with open(result_file, "w", encoding="utf-8") as f:
-                json.dump(result_data, f, indent=2, ensure_ascii=False, default=str)
-            logger.info(f"Result file saved: {result_file}")
+            # 임시 파일에 데이터 쓰기
+            with open(temp_file, "w", encoding="utf-8") as f:
+                # 쓰기 잠금 설정 (비차단)
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    json.dump(result_data, f, indent=2, ensure_ascii=False, default=str)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+            # 원자적 이름 변경 (실패하지 않음)
+            os.replace(temp_file, result_file)
+            logger.info(f"Result file saved (atomic): {result_file}")
         except Exception as e:
             logger.error(f"Failed to save result file: {e}")
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_err}")
             return False
 
         # 2. 인덱스 업데이트
@@ -589,16 +608,38 @@ class ResultManager:
         }
 
     @staticmethod
+    def _normalize_symbol_result(symbol_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        심볼 결과 정규화 (Phase 2: 하위 호환성 지원)
+
+        기존 JSON 파일에 is_active 필드가 없으면 기본값(True)을 주입합니다.
+        이를 통해 SymbolResult의 Pydantic 검증을 통과하고
+        프론트엔드와 API가 is_active 필드를 안정적으로 받을 수 있습니다.
+
+        Args:
+            symbol_dict: 심볼 결과 dict
+
+        Returns:
+            정규화된 심볼 결과 dict (is_active 필드 포함)
+        """
+        if "is_active" not in symbol_dict:
+            symbol_dict["is_active"] = True
+            logger.debug(f"Added default is_active=True for symbol {symbol_dict.get('symbol')}")
+        return symbol_dict
+
+    @staticmethod
     def get_result(data_root: str, run_id: str) -> Optional[Dict[str, Any]]:
         """
-        특정 실행 결과 조회
+        특정 실행 결과 조회 (Phase 2: 하위 호환성 지원)
+
+        기존 JSON 파일의 is_active 필드 누락 시 기본값을 자동 주입합니다.
 
         Args:
             data_root: 데이터 루트 디렉토리
             run_id: 실행 ID
 
         Returns:
-            결과 데이터 dict 또는 None
+            결과 데이터 dict 또는 None (is_active 필드 정규화됨)
         """
         results_dir = os.path.join(data_root, "results")
         result_file = os.path.join(results_dir, f"{run_id}.json")
@@ -608,7 +649,16 @@ class ResultManager:
 
         try:
             with open(result_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+                result_data = json.load(f)
+
+            # Phase 2: 심볼 결과 정규화 (하위 호환성)
+            if "symbols" in result_data and isinstance(result_data["symbols"], list):
+                result_data["symbols"] = [
+                    ResultManager._normalize_symbol_result(sym)
+                    for sym in result_data["symbols"]
+                ]
+
+            return result_data
         except Exception as e:
             logger.error(f"Error reading result file {result_file}: {e}")
             return None
