@@ -52,6 +52,13 @@ services:
       - DATABASE_URL=postgresql://coin_user:coin_password@postgres:5432/coin_db
       - TZ=Asia/Seoul
       - PYTHONUNBUFFERED=1
+      # 스케줄러 설정 (Issue #37: 타임프레임/심볼 통일화)
+      # 프론트엔드와 동기화: DataManagementPage.jsx, BacktestPage.jsx
+      - SCHEDULER_SYMBOLS=KRW-BTC,KRW-ETH,KRW-XRP,KRW-SOL,KRW-XLM,KRW-ADA,KRW-DOGE,KRW-BCH,KRW-NEAR
+      - SCHEDULER_TIMEFRAMES=1M,5M,1H,1D,1W
+      - ENABLE_SCHEDULER=true
+      - SCHEDULER_HOUR=9
+      - SCHEDULER_MINUTE=0
 
     # 볼륨 마운트
     volumes:
@@ -93,6 +100,10 @@ services:
       - DATABASE_URL=postgresql://coin_user:coin_password@postgres:5432/coin_db
       - TZ=Asia/Seoul
       - PYTHONUNBUFFERED=1
+      # 스케줄러 설정 (Issue #37: 타임프레임/심볼 통일화)
+      # 프론트엔드와 동기화: DataManagementPage.jsx, BacktestPage.jsx
+      - SCHEDULER_SYMBOLS=KRW-BTC,KRW-ETH,KRW-XRP,KRW-SOL,KRW-XLM,KRW-ADA,KRW-DOGE,KRW-BCH,KRW-NEAR
+      - SCHEDULER_TIMEFRAMES=1M,5M,1H,1D,1W
     volumes:
       - ./data:/data
       - ./backend:/app/backend
@@ -127,6 +138,9 @@ services:
       - DATABASE_URL=postgresql://coin_user:coin_password@postgres:5432/coin_db
       - TZ=Asia/Seoul
       - PYTHONUNBUFFERED=1
+      # 스케줄러 설정 (Issue #37: 타임프레임/심볼 통일화)
+      - SCHEDULER_SYMBOLS=KRW-BTC,KRW-ETH,KRW-XRP,KRW-SOL,KRW-XLM,KRW-ADA,KRW-DOGE,KRW-BCH,KRW-NEAR
+      - SCHEDULER_TIMEFRAMES=1M,5M,1H,1D,1W
 
     volumes:
       - ./data:/data
@@ -201,6 +215,9 @@ services:
       - DATABASE_URL=postgresql://coin_user:coin_password@postgres:5432/coin_db
       - TZ=Asia/Seoul
       - PYTHONUNBUFFERED=1
+      # 스케줄러 설정 (Issue #37: 타임프레임/심볼 통일화)
+      - SCHEDULER_SYMBOLS=KRW-BTC,KRW-ETH,KRW-XRP,KRW-SOL,KRW-XLM,KRW-ADA,KRW-DOGE,KRW-BCH,KRW-NEAR
+      - SCHEDULER_TIMEFRAMES=1M,5M,1H,1D,1W
     volumes:
       - ./data:/data
       - ./backend:/app/backend

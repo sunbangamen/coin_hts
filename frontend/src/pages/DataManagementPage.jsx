@@ -4,7 +4,11 @@ import '../styles/DataManagementPage.css'
 import { fetchInventory, uploadFile } from '../services/dataApi'
 import SchedulerPanel from '../components/SchedulerPanel'
 
-const TIMEFRAMES = ['1D', '1H', '5M', '1M']
+// 기본 심볼 목록 (프론트엔드와 백엔드가 동기화해야 함)
+const DEFAULT_SYMBOLS = ['KRW-BTC', 'KRW-ETH', 'KRW-XRP', 'KRW-SOL', 'KRW-XLM', 'KRW-ADA', 'KRW-DOGE', 'KRW-BCH', 'KRW-NEAR']
+
+// 타임프레임 목록 (프론트엔드와 백엔드가 동기화해야 함)
+const TIMEFRAMES = ['1M', '5M', '1H', '1D', '1W']
 
 export default function DataManagementPage() {
   const [activeTab, setActiveTab] = useState('inventory')
@@ -355,20 +359,33 @@ export default function DataManagementPage() {
                   )}
                 </div>
 
-                {/* Symbol Input */}
+                {/* Symbol Select */}
                 <div className="form-group">
-                  <label htmlFor="symbol-input">심볼 *</label>
-                  <input
-                    id="symbol-input"
-                    type="text"
-                    placeholder="예: BTC_KRW"
+                  <label htmlFor="symbol-select">심볼 *</label>
+                  <select
+                    id="symbol-select"
                     value={uploadSymbol}
                     onChange={(e) => setUploadSymbol(e.target.value)}
                     disabled={uploading}
-                    pattern="[A-Za-z0-9_]*"
-                    title="대문자, 숫자, 언더스코어만 사용 가능합니다"
-                  />
-                  <div className="info-text">입력하신 심볼은 자동으로 대문자로 변환됩니다.</div>
+                  >
+                    <option value="">심볼을 선택하세요</option>
+                    {/* 기본 심볼 목록 */}
+                    {DEFAULT_SYMBOLS.map(symbol => (
+                      <option key={symbol} value={symbol}>
+                        {symbol}
+                      </option>
+                    ))}
+                    {/* 인벤토리에서 발견된 추가 심볼 */}
+                    {Array.from(availableSymbols)
+                      .filter(symbol => !DEFAULT_SYMBOLS.includes(symbol))
+                      .sort()
+                      .map(symbol => (
+                        <option key={symbol} value={symbol}>
+                          {symbol}
+                        </option>
+                      ))}
+                  </select>
+                  <div className="info-text">기본 심볼 또는 인벤토리의 심볼을 선택하세요</div>
                 </div>
 
                 {/* Timeframe Select */}
@@ -434,8 +451,10 @@ export default function DataManagementPage() {
                   <li>Parquet 형식의 파일만 업로드 가능합니다</li>
                   <li>필수 컬럼: open, high, low, close, volume, timestamp</li>
                   <li>파일 크기: 최대 200MB</li>
-                  <li>저장 경로: <code>{`DATA_ROOT/{심볼}/{타임프레임}/{연도}.parquet`}</code></li>
-                  <li>심볼과 타임프레임은 자동으로 대문자로 정규화됩니다</li>
+                  <li>저장 경로: <code>{`data/{심볼}/{타임프레임}/{연도}.parquet`}</code></li>
+                  <li>예시: <code>data/KRW-BTC/1M/2024.parquet</code></li>
+                  <li><strong>지원 심볼:</strong> {DEFAULT_SYMBOLS.join(', ')}</li>
+                  <li><strong>지원 타임프레임:</strong> {TIMEFRAMES.join(', ')}</li>
                 </ul>
               </div>
             </div>

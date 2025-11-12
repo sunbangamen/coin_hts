@@ -21,6 +21,11 @@ from apscheduler.triggers.cron import CronTrigger
 import redis
 from rq import Queue
 from backend.app.jobs import fetch_candles_job, batch_fetch_candles_job
+from backend.app.scheduler_config import (
+    get_scheduler_symbols,
+    get_scheduler_timeframes,
+    log_config_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +36,9 @@ SCHEDULER_HOUR = int(os.getenv('SCHEDULER_HOUR', 9))  # UTC 기준
 SCHEDULER_MINUTE = int(os.getenv('SCHEDULER_MINUTE', 0))
 ENABLE_SCHEDULER = os.getenv('ENABLE_SCHEDULER', 'true').lower() == 'true'
 
-# 기본 심볼 및 타임프레임 설정
-DEFAULT_SYMBOLS = os.getenv('SCHEDULER_SYMBOLS', 'KRW-BTC,KRW-ETH,KRW-XRP').split(',')
-DEFAULT_TIMEFRAMES = os.getenv('SCHEDULER_TIMEFRAMES', '1H,1D').split(',')
+# 기본 심볼 및 타임프레임 설정 (scheduler_config.py에서 로드)
+DEFAULT_SYMBOLS = get_scheduler_symbols()
+DEFAULT_TIMEFRAMES = get_scheduler_timeframes()
 
 # Redis 연결
 redis_conn = None
@@ -84,6 +89,9 @@ def format_job_result_for_ui(result: dict, timestamp: datetime = None) -> dict:
 def init_scheduler():
     """스케줄러 초기화"""
     global scheduler, redis_conn
+
+    # 설정 정보 출력
+    log_config_info()
 
     if not ENABLE_SCHEDULER:
         logger.warning("⚠️  스케줄러가 비활성화되었습니다 (ENABLE_SCHEDULER=false)")
