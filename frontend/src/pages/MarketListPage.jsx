@@ -10,7 +10,7 @@
  * - 페이지네이션 (50개씩)
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import '../styles/MarketListPage.css'
 import { fetchKRWMarkets, mergeMarketsAndTickers } from '../services/marketsApi'
 import { useWebSocket } from '../hooks/useWebSocket'
@@ -61,7 +61,7 @@ export default function MarketListPage() {
     } else if (data.type === 'cached_complete') {
       // 캐시 전송 완료 신호 → 마켓 목록 로드
       console.log('[MarketListPage] Cached data complete, loading markets...')
-      loadMarketsFromApi()
+      loadMarketsFromApi({ silent: true })
     } else if (data.type === 'ticker') {
       // 실시간 시세 업데이트
       setCachedTickers(prev => ({
@@ -101,7 +101,11 @@ export default function MarketListPage() {
   /**
    * API에서 마켓 목록 로드
    */
-  const loadMarketsFromApi = useCallback(async () => {
+  const loadMarketsFromApi = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+    }
+
     try {
       const marketsData = await fetchKRWMarkets()
       const baseMarkets = marketsData.markets || []
@@ -117,12 +121,30 @@ export default function MarketListPage() {
 
       setMarkets(merged)
       setWsError(null)
-      setLoading(false)
     } catch (err) {
       console.error('[MarketListPage] Error loading markets:', err)
       setWsError(err.message || '마켓 목록 로드 실패')
+    } finally {
+      if (!silent) {
+        setLoading(false)
+      }
     }
   }, [cachedTickers])
+
+  /**
+   * 초기 마운트 시 최소 한 번은 REST API로 데이터를 로드
+   * (WebSocket 연결 실패 시에도 빈 화면을 방지)
+   */
+  const initialLoadTriggered = useRef(false)
+
+  useEffect(() => {
+    if (initialLoadTriggered.current) return
+    initialLoadTriggered.current = true
+
+    loadMarketsFromApi().catch((error) => {
+      console.error('[MarketListPage] Initial load failed:', error)
+    })
+  }, [loadMarketsFromApi])
 
   /**
    * 초기 로드 및 데이터 동기화
