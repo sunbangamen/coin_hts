@@ -4,7 +4,8 @@
  *
  * 업비트 KRW 마켓 전체 종목을 깔끔한 테이블로 표시
  * - 실시간 시세 표시 (현재가, 등락률, 거래량, 거래대금)
- * - WebSocket을 통한 진정한 실시간 업데이트
+ * - WebSocket을 통한 진정한 실시간 업데이트 (VITE_ENABLE_LIVE_TICKERS에 따라 선택)
+ * - REST-only 폴백: WebSocket 서버가 없어도 REST API로 데이터 표시
  * - 정렬 기능 (모든 컬럼)
  * - 검색 기능 (심볼/한글명)
  * - 페이지네이션 (50개씩)
@@ -90,12 +91,14 @@ export default function MarketListPage() {
   }, [])
 
   /**
-   * WebSocket 훅 사용
+   * WebSocket 훅 사용 (silent 모드: 에러 메시지를 사용자에게 노출하지 않음)
+   * 실시간 기능은 선택사항이므로, WebSocket 서버가 없어도 조용히 폴백
    */
-  const { connected: wsConnected, retryCount } = useWebSocket(
+  const { connected: wsConnected, status: wsStatus, enabled: wsEnabled } = useWebSocket(
     '/ws/tickers/krw',
     handleWebSocketMessage,
-    handleWebSocketError
+    handleWebSocketError,
+    { silent: true }  // silent 모드: 에러를 console에만 남기고 사용자 UI에는 표시 안 함
   )
 
   /**
@@ -321,21 +324,30 @@ export default function MarketListPage() {
         </div>
       </div>
 
-      {wsError && (
-        <div className="error-message">
-          <strong>오류:</strong> {wsError}
-          {!wsConnected && retryCount > 0 && (
-            <span className="retry-info"> (재연결 시도: {retryCount}/5)</span>
-          )}
+      {/* 실시간 시세 상태 안내 */}
+      {wsEnabled ? (
+        // 실시간 기능 활성화 상태
+        wsStatus === 'live' ? (
+          <div className="ws-status">
+            <span className="status-indicator connected">
+              ● 실시간 시세 연결됨
+            </span>
+          </div>
+        ) : wsStatus === 'failed' ? (
+          <div className="ws-status-alert">
+            <span className="status-badge offline">
+              📊 실시간 시세 미연결 – 데이터는 REST 기준입니다
+            </span>
+          </div>
+        ) : null
+      ) : (
+        // 실시간 기능 비활성화 상태
+        <div className="ws-status-alert">
+          <span className="status-badge disabled">
+            📊 실시간 시세가 비활성화되었습니다
+          </span>
         </div>
       )}
-
-      {/* WebSocket 연결 상태 */}
-      <div className="ws-status">
-        <span className={`status-indicator ${wsConnected ? 'connected' : 'disconnected'}`}>
-          {wsConnected ? '● 실시간 연결됨' : '● 연결 중...'}
-        </span>
-      </div>
 
       <div className="market-list-controls">
         <input

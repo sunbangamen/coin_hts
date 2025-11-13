@@ -733,6 +733,79 @@ npm run dev
 
 ## 환경 설정
 
+### 실시간 시세 (Live Tickers) 환경 설정
+
+**개요**: 실시간 시세 업데이트는 선택 사항입니다. WebSocket 서버가 없어도 REST API로 데이터를 표시합니다.
+
+#### 환경 변수
+
+| 변수명 | 기본값 | 설명 |
+|--------|--------|------|
+| `VITE_ENABLE_LIVE_TICKERS` | `true` | 실시간 기능 활성화/비활성화 |
+| `VITE_WS_BASE_URL` | `ws://localhost:8000` | WebSocket 서버 주소 |
+| `VITE_WS_MAX_RETRIES` | `5` | 최대 재연결 시도 횟수 |
+
+#### 설정 방법
+
+**로컬 개발 (프론트엔드만 테스트):**
+```bash
+# .env 파일 생성
+cp .env.example .env
+
+# WebSocket 기능 비활성화 (REST API만 사용)
+echo "VITE_ENABLE_LIVE_TICKERS=false" >> .env
+
+npm run dev
+```
+
+**Docker 개발 (전체 스택):**
+```bash
+docker-compose --profile frontend-dev up -d
+# 프론트엔드는 자동으로 backend 서비스와 연결됨
+```
+
+#### 동작 모드
+
+**실시간 활성화 (VITE_ENABLE_LIVE_TICKERS=true)**
+- WebSocket 연결 시도
+- 성공: "실시간 시세 연결됨" 표시
+- 실패: 옅은 경고 배지 "실시간 시세 미연결 – 데이터는 REST 기준입니다"
+
+**실시간 비활성화 (VITE_ENABLE_LIVE_TICKERS=false)**
+- WebSocket 연결 시도 안 함
+- REST API로만 데이터 표시
+- "실시간 시세가 비활성화되었습니다" 배지 표시
+
+#### useWebSocket 훅 사용
+
+```javascript
+// silent 모드: 에러 메시지를 사용자에게 노출하지 않음
+const { connected, status, enabled } = useWebSocket(
+  '/ws/tickers/krw',
+  handleMessage,
+  handleError,
+  { silent: true }  // 조용한 폴백
+)
+
+// status 값: 'idle' | 'connecting' | 'live' | 'disabled' | 'failed'
+```
+
+#### 트러블슈팅
+
+**"실시간 시세 미연결" 배지가 계속 표시됨**
+- WebSocket 서버 (backend:8000)가 실행 중인지 확인
+- `VITE_WS_BASE_URL` 설정 확인
+- 브라우저 콘솔 → Network 탭에서 WebSocket 연결 확인
+
+**REST API로만 사용하고 싶음**
+```bash
+# .env에서 실시간 기능 비활성화
+VITE_ENABLE_LIVE_TICKERS=false
+npm run dev
+```
+
+---
+
 ### API 주소 변경
 
 `vite.config.js`의 `server.proxy` 섹션 수정:

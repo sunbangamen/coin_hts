@@ -1,22 +1,40 @@
 /**
- * WebSocket 훅 (Task 7)
+ * WebSocket 훅 (Task 7 + 개선)
  *
  * 실시간 시세 데이터를 WebSocket을 통해 수신하는 커스텀 훅
  * 자동 재연결, 에러 처리, 상태 관리 포함
+ *
+ * 환경 변수:
+ *   - VITE_WS_BASE_URL: WebSocket 서버 주소 (기본: ws://localhost:8000)
+ *   - VITE_ENABLE_LIVE_TICKERS: 실시간 기능 활성화 (기본: true)
+ *   - VITE_WS_MAX_RETRIES: 최대 재연결 횟수 (기본: 5)
+ *
+ * 옵션:
+ *   - enabled: false면 WebSocket 연결 시도하지 않음
+ *   - silent: true면 에러 시 onError 콜백 호출하지 않고 console에만 남김
+ *   - maxRetries: 최대 재연결 횟수 (env 설정 무시)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 
 const WS_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000'
+const ENABLE_LIVE_TICKERS = import.meta.env.VITE_ENABLE_LIVE_TICKERS !== 'false'
+const ENV_MAX_RETRIES = parseInt(import.meta.env.VITE_WS_MAX_RETRIES || '5', 10)
 
-export function useWebSocket(path, onMessage, onError) {
+export function useWebSocket(path, onMessage, onError, options = {}) {
+  const {
+    enabled = ENABLE_LIVE_TICKERS,
+    silent = false,
+    maxRetries = ENV_MAX_RETRIES
+  } = options
+
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
+  const [status, setStatus] = useState(enabled ? 'idle' : 'disabled')
   const wsRef = useRef(null)
   const reconnectTimeoutRef = useRef(null)
 
-  const MAX_RETRIES = 5
   const RECONNECT_DELAY = 3000 // 3초
 
   // ============================================================================
@@ -24,13 +42,15 @@ export function useWebSocket(path, onMessage, onError) {
   // ============================================================================
 
   const connect = useCallback(() => {
-    if (wsRef.current) {
-      return // 이미 연결 중
+    // 기능이 비활성화되었거나 이미 연결 중이면 반환
+    if (!enabled || wsRef.current) {
+      return
     }
 
     try {
       const wsAddress = `${WS_URL}${path}`
       console.log(`[WebSocket] Connecting to ${wsAddress}`)
+      setStatus('connecting')
 
       const ws = new WebSocket(wsAddress)
 
@@ -39,6 +59,7 @@ export function useWebSocket(path, onMessage, onError) {
         setConnected(true)
         setError(null)
         setRetryCount(0)
+        setStatus('live')
       }
 
       ws.onmessage = (event) => {
@@ -56,7 +77,8 @@ export function useWebSocket(path, onMessage, onError) {
         setError(errorMsg)
         setConnected(false)
 
-        if (onError) {
+        // silent 모드: 에러 콜백 호출 안 함, console에만 남김
+        if (!silent && onError) {
           onError(errorMsg)
         }
       }
@@ -67,13 +89,13 @@ export function useWebSocket(path, onMessage, onError) {
         wsRef.current = null
 
         // 자동 재연결
-        if (retryCount < MAX_RETRIES) {
+        if (retryCount < maxRetries) {
           const nextRetry = retryCount + 1
           const delay = RECONNECT_DELAY * Math.pow(1.5, retryCount) // 지수 백오프
 
           console.log(
             `[WebSocket] Reconnecting in ${Math.round(delay / 1000)}s ` +
-            `(attempt ${nextRetry}/${MAX_RETRIES})`
+            `(attempt ${nextRetry}/${maxRetries})`
           )
 
           setRetryCount(nextRetry)
@@ -82,11 +104,13 @@ export function useWebSocket(path, onMessage, onError) {
             connect()
           }, delay)
         } else {
-          const maxRetriesMsg = `WebSocket: 최대 재연결 횟수 초과 (${MAX_RETRIES}회)`
+          const maxRetriesMsg = `WebSocket: 최대 재연결 횟수 초과 (${maxRetries}회)`
           console.error(`[WebSocket] ${maxRetriesMsg}`)
           setError(maxRetriesMsg)
+          setStatus('failed')
 
-          if (onError) {
+          // silent 모드: 에러 콜백 호출 안 함
+          if (!silent && onError) {
             onError(maxRetriesMsg)
           }
         }
@@ -98,12 +122,14 @@ export function useWebSocket(path, onMessage, onError) {
       const errorMsg = `WebSocket 연결 실패: ${err.message}`
       setError(errorMsg)
       setConnected(false)
+      setStatus('failed')
 
-      if (onError) {
+      // silent 모드: 에러 콜백 호출 안 함
+      if (!silent && onError) {
         onError(errorMsg)
       }
     }
-  }, [path, onMessage, onError, retryCount])
+  }, [path, onMessage, onError, enabled, silent, retryCount, maxRetries])
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -141,10 +167,13 @@ export function useWebSocket(path, onMessage, onError) {
     connected,
     error,
     retryCount,
+    status, // 'idle' | 'connecting' | 'live' | 'disabled' | 'failed'
+    enabled,
     ws: wsRef.current,
     reconnect: () => {
       disconnect()
       setRetryCount(0)
+      setStatus('idle')
       connect()
     }
   }
